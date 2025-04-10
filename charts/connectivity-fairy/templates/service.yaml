@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-connectivity-fairy
+  labels:
+    app: {{ .Release.Name }}-connectivity-fairy
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+    {{- if eq .Values.service.type "NodePort" }}
+    nodePort: {{ .Values.service.nodePort }}
+    {{- end }}
+  selector:
+    app: {{ .Release.Name }}-connectivity-fairy

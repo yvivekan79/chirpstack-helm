@@ -1,0 +1,40 @@
+Thank you for installing {{ .Chart.Name }}.
+
+ChirpStack IoT Stack has been deployed to your cluster.
+
+The components installed are:
+{{- if .Values.postgresql.enabled }}
+- PostgreSQL
+{{- end }}
+{{- if .Values.redis.enabled }}
+- Redis
+{{- end }}
+{{- if .Values.emqx.enabled }}
+- EMQX (MQTT broker)
+{{- end }}
+{{- if index .Values "chirpstack-gateway-bridge" "enabled" }}
+- ChirpStack Gateway Bridge
+{{- end }}
+{{- if index .Values "chirpstack-network-server" "enabled" }}
+- ChirpStack Network Server
+{{- end }}
+{{- if index .Values "chirpstack-application-server" "enabled" }}
+- ChirpStack Application Server
+{{- end }}
+
+{{- if and (index .Values "chirpstack-application-server" "enabled") (index .Values "chirpstack-application-server" "ingress" "enabled") }}
+
+You can access the ChirpStack Application Server at:
+  http://{{ index .Values "chirpstack-application-server" "ingress" "host" }}
+
+Default login credentials:
+  Username: admin
+  Password: admin
+
+IMPORTANT: Change the default password immediately after first login for security reasons.
+{{- end }}
+
+To check the status of your deployment:
+  kubectl get all -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }}
+
+For more information, refer to the README.md file included with the chart.

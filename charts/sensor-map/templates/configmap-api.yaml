@@ -1,0 +1,433 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-sensor-map-api
+  labels:
+    app: {{ .Release.Name }}-sensor-map
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  server.js: |
+    const http = require('http');
+    const { Pool } = require('pg');
+    const { Kafka } = require('kafkajs');
+    const WebSocket = require('ws');
+    
+    // Environment variables
+    const PORT = process.env.PORT || 3000;
+    const DB_HOST = process.env.DB_HOST || 'localhost';
+    const DB_PORT = process.env.DB_PORT || 5432;
+    const DB_NAME = process.env.DB_NAME || 'iot_timeseries';
+    const DB_USER = process.env.DB_USER || 'postgres';
+    const DB_PASSWORD = process.env.DB_PASSWORD || 'postgres';
+    const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || '').split(',').filter(Boolean);
+    const KAFKA_TOPICS = (process.env.KAFKA_TOPICS || '').split(',').filter(Boolean);
+    const KAFKA_CONSUMER_GROUP = process.env.KAFKA_CONSUMER_GROUP || 'sensor-map-consumer';
+    
+    // PostgreSQL connection
+    const pool = new Pool({
+      host: DB_HOST,
+      port: DB_PORT,
+      database: DB_NAME,
+      user: DB_USER,
+      password: DB_PASSWORD,
+      ssl: false,
+    });
+    
+    // Connect to database
+    pool.connect()
+      .then(() => console.log('Connected to PostgreSQL'))
+      .catch(err => console.error('PostgreSQL connection error:', err));
+    
+    // In-memory cache for sensor data
+    let sensorCache = {
+      airQuality: [],
+      temperatureHumidity: [],
+      all: []
+    };
+    
+    // Update cache from database
+    async function updateCacheFromDB() {
+      try {
+        // Get air quality sensors
+        const airQualityResult = await pool.query(`
+          SELECT 
+            device_id as id,
+            device_name as name,
+            'air-quality' as type,
+            latitude,
+            longitude,
+            aqi,
+            pm25,
+            pm10,
+            created_at as timestamp
+          FROM air_quality_sensors
+          WHERE created_at > NOW() - INTERVAL '24 HOURS'
+          ORDER BY device_id, created_at DESC
+        `);
+        
+        // Process air quality data (keeping only latest reading per device)
+        const airQualityMap = new Map();
+        for (const row of airQualityResult.rows) {
+          if (!airQualityMap.has(row.id) || new Date(row.timestamp) > new Date(airQualityMap.get(row.id).timestamp)) {
+            airQualityMap.set(row.id, {
+              id: row.id,
+              name: row.name,
+              type: row.type,
+              location: {
+                latitude: parseFloat(row.latitude),
+                longitude: parseFloat(row.longitude)
+              },
+              readings: {
+                aqi: parseInt(row.aqi),
+                pm25: parseFloat(row.pm25),
+                pm10: parseFloat(row.pm10)
+              },
+              timestamp: row.timestamp
+            });
+          }
+        }
+        
+        // Get temperature/humidity sensors
+        const tempHumidityResult = await pool.query(`
+          SELECT 
+            device_id as id,
+            device_name as name,
+            'temperature-humidity' as type,
+            latitude,
+            longitude,
+            temperature,
+            humidity,
+            created_at as timestamp
+          FROM temperature_humidity_sensors
+          WHERE created_at > NOW() - INTERVAL '24 HOURS'
+          ORDER BY device_id, created_at DESC
+        `);
+        
+        // Process temperature/humidity data (keeping only latest reading per device)
+        const tempHumidityMap = new Map();
+        for (const row of tempHumidityResult.rows) {
+          if (!tempHumidityMap.has(row.id) || new Date(row.timestamp) > new Date(tempHumidityMap.get(row.id).timestamp)) {
+            tempHumidityMap.set(row.id, {
+              id: row.id,
+              name: row.name,
+              type: row.type,
+              location: {
+                latitude: parseFloat(row.latitude),
+                longitude: parseFloat(row.longitude)
+              },
+              readings: {
+                temperature: parseFloat(row.temperature),
+                humidity: parseFloat(row.humidity)
+              },
+              timestamp: row.timestamp
+            });
+          }
+        }
+        
+        // Update cache
+        sensorCache.airQuality = Array.from(airQualityMap.values());
+        sensorCache.temperatureHumidity = Array.from(tempHumidityMap.values());
+        sensorCache.all = [...sensorCache.airQuality, ...sensorCache.temperatureHumidity];
+        
+        console.log(`Cache updated: ${sensorCache.airQuality.length} air quality sensors, ${sensorCache.temperatureHumidity.length} temperature/humidity sensors`);
+      } catch (error) {
+        console.error('Error updating cache from database:', error);
+      }
+    }
+    
+    // Process air quality data from Kafka
+    function processAirQualityData(data) {
+      try {
+        const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+        
+        // Validate required fields
+        if (!parsedData.device_id || 
+            !parsedData.device_name || 
+            parsedData.latitude === undefined || 
+            parsedData.longitude === undefined ||
+            parsedData.aqi === undefined) {
+          console.warn('Skipping invalid air quality data:', parsedData);
+          return;
+        }
+        
+        const sensorData = {
+          id: parsedData.device_id,
+          name: parsedData.device_name,
+          type: 'air-quality',
+          location: {
+            latitude: parseFloat(parsedData.latitude),
+            longitude: parseFloat(parsedData.longitude)
+          },
+          readings: {
+            aqi: parseInt(parsedData.aqi),
+            pm25: parseFloat(parsedData.pm25 || 0),
+            pm10: parseFloat(parsedData.pm10 || 0)
+          },
+          timestamp: parsedData.timestamp || new Date().toISOString()
+        };
+        
+        // Update cache
+        const existingIndex = sensorCache.airQuality.findIndex(s => s.id === sensorData.id);
+        if (existingIndex >= 0) {
+          sensorCache.airQuality[existingIndex] = sensorData;
+        } else {
+          sensorCache.airQuality.push(sensorData);
+        }
+        
+        // Update all sensors list
+        const allIndex = sensorCache.all.findIndex(s => s.id === sensorData.id && s.type === 'air-quality');
+        if (allIndex >= 0) {
+          sensorCache.all[allIndex] = sensorData;
+        } else {
+          sensorCache.all.push(sensorData);
+        }
+        
+        // Notify connected clients
+        broadcastUpdate(sensorData);
+      } catch (error) {
+        console.error('Error processing air quality data:', error);
+      }
+    }
+    
+    // Process temperature/humidity data from Kafka
+    function processTempHumidityData(data) {
+      try {
+        const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+        
+        // Validate required fields
+        if (!parsedData.device_id || 
+            !parsedData.device_name || 
+            parsedData.latitude === undefined || 
+            parsedData.longitude === undefined ||
+            parsedData.temperature === undefined ||
+            parsedData.humidity === undefined) {
+          console.warn('Skipping invalid temperature/humidity data:', parsedData);
+          return;
+        }
+        
+        const sensorData = {
+          id: parsedData.device_id,
+          name: parsedData.device_name,
+          type: 'temperature-humidity',
+          location: {
+            latitude: parseFloat(parsedData.latitude),
+            longitude: parseFloat(parsedData.longitude)
+          },
+          readings: {
+            temperature: parseFloat(parsedData.temperature),
+            humidity: parseFloat(parsedData.humidity)
+          },
+          timestamp: parsedData.timestamp || new Date().toISOString()
+        };
+        
+        // Update cache
+        const existingIndex = sensorCache.temperatureHumidity.findIndex(s => s.id === sensorData.id);
+        if (existingIndex >= 0) {
+          sensorCache.temperatureHumidity[existingIndex] = sensorData;
+        } else {
+          sensorCache.temperatureHumidity.push(sensorData);
+        }
+        
+        // Update all sensors list
+        const allIndex = sensorCache.all.findIndex(s => s.id === sensorData.id && s.type === 'temperature-humidity');
+        if (allIndex >= 0) {
+          sensorCache.all[allIndex] = sensorData;
+        } else {
+          sensorCache.all.push(sensorData);
+        }
+        
+        // Notify connected clients
+        broadcastUpdate(sensorData);
+      } catch (error) {
+        console.error('Error processing temperature/humidity data:', error);
+      }
+    }
+    
+    // Create Kafka consumer if brokers are configured
+    let kafka = null;
+    let consumer = null;
+    
+    if (KAFKA_BROKERS.length > 0 && KAFKA_TOPICS.length > 0) {
+      try {
+        kafka = new Kafka({
+          clientId: 'sensor-map-api',
+          brokers: KAFKA_BROKERS
+        });
+        
+        consumer = kafka.consumer({ groupId: KAFKA_CONSUMER_GROUP });
+        
+        // Connect to Kafka and subscribe to topics
+        const runKafkaConsumer = async () => {
+          await consumer.connect();
+          console.log('Connected to Kafka');
+          
+          for (const topic of KAFKA_TOPICS) {
+            await consumer.subscribe({ topic, fromBeginning: false });
+            console.log(`Subscribed to topic: ${topic}`);
+          }
+          
+          await consumer.run({
+            eachMessage: async ({ topic, partition, message }) => {
+              try {
+                const value = message.value.toString();
+                console.log(`Received message from ${topic}:`, value.substring(0, 100) + '...');
+                
+                if (topic.includes('airqualitysensor')) {
+                  processAirQualityData(value);
+                } else if (topic.includes('temperaturehumiditysensor')) {
+                  processTempHumidityData(value);
+                }
+              } catch (error) {
+                console.error('Error processing Kafka message:', error);
+              }
+            }
+          });
+        };
+        
+        runKafkaConsumer().catch(error => {
+          console.error('Error running Kafka consumer:', error);
+        });
+      } catch (error) {
+        console.error('Error setting up Kafka:', error);
+      }
+    } else {
+      console.log('Kafka brokers or topics not configured, skipping Kafka consumer setup');
+    }
+    
+    // HTTP server
+    const server = http.createServer((req, res) => {
+      // Set CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      
+      // Handle OPTIONS request
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      
+      // Only handle GET requests
+      if (req.method !== 'GET') {
+        res.writeHead(405);
+        res.end('Method Not Allowed');
+        return;
+      }
+      
+      // API endpoints
+      if (req.url === '/api/sensors/all') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(sensorCache.all));
+      } 
+      else if (req.url === '/api/sensors/air-quality') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(sensorCache.airQuality));
+      } 
+      else if (req.url === '/api/sensors/temperature-humidity') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(sensorCache.temperatureHumidity));
+      }
+      else if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('OK');
+      }
+      else {
+        res.writeHead(404);
+        res.end('Not Found');
+      }
+    });
+    
+    // WebSocket server for real-time updates
+    const wss = new WebSocket.Server({ server, path: '/api/ws' });
+    
+    wss.on('connection', (ws) => {
+      console.log('WebSocket client connected');
+      
+      // Send initial data on connection
+      ws.send(JSON.stringify({ type: 'full-update', data: sensorCache.all }));
+      
+      ws.on('error', (error) => {
+        console.error('WebSocket error:', error);
+      });
+      
+      ws.on('close', () => {
+        console.log('WebSocket client disconnected');
+      });
+    });
+    
+    // Broadcast updates to all connected WebSocket clients
+    function broadcastUpdate(data) {
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ 
+            type: 'sensor-update',
+            data: data
+          }));
+        }
+      });
+    }
+    
+    // Start server
+    server.listen(PORT, () => {
+      console.log(`Sensor Map API server listening on port ${PORT}`);
+      
+      // Initial cache update from database
+      updateCacheFromDB();
+      
+      // Periodically update cache from database (every 5 minutes)
+      setInterval(updateCacheFromDB, 5 * 60 * 1000);
+    });
+    
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+      console.log('SIGTERM received, shutting down...');
+      
+      // Close WebSocket server
+      wss.close(() => {
+        console.log('WebSocket server closed');
+      });
+      
+      // Disconnect Kafka consumer
+      if (consumer) {
+        try {
+          await consumer.disconnect();
+          console.log('Kafka consumer disconnected');
+        } catch (error) {
+          console.error('Error disconnecting Kafka consumer:', error);
+        }
+      }
+      
+      // Close database pool
+      try {
+        await pool.end();
+        console.log('Database pool closed');
+      } catch (error) {
+        console.error('Error closing database pool:', error);
+      }
+      
+      // Close HTTP server
+      server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+      });
+      
+      // Force exit after timeout
+      setTimeout(() => {
+        console.error('Forced shutdown after timeout');
+        process.exit(1);
+      }, 10000);
+    });
+  
+  package.json: |
+    {
+      "name": "sensor-map-api",
+      "version": "1.0.0",
+      "description": "API server for ChirpStack IoT Sensor Map",
+      "main": "server.js",
+      "dependencies": {
+        "pg": "^8.11.3",
+        "kafkajs": "^2.2.4",
+        "ws": "^8.14.2"
+      }
+    }

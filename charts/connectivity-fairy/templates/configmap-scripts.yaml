@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-connectivity-fairy-scripts
+  labels:
+    app: {{ .Release.Name }}-connectivity-fairy
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  connectivity-check.sh: |
+    #!/bin/bash
+    set -e
+
+    SCAN_INTERVAL=${SCAN_INTERVAL:-60}
+    NAMESPACE=${NAMESPACE:-default}
+    RESULT_FILE="/data/connectivity.json"
+    
+    # Function to check connectivity between components
+    check_connectivity() {
+      local source=$1
+      local target=$2
+      local port=$3
+      
+      # Get pod IP
+      local target_service="${target}"
+      if [[ -z "$port" ]]; then
+        # Default ports for common services
+        case $target in
+          *postgresql*) port=5432 ;;
+          *redis*) port=6379 ;;
+          *kafka*) port=9092 ;;
+          *emqx*) port=1883 ;;
+          *timescaledb*) port=5432 ;;
+          *) port=80 ;;
+        esac
+      fi
+      
+      echo "Checking connectivity from $source to $target:$port..."
+      
+      # Execute in source pod
+      kubectl exec -n $NAMESPACE $(kubectl get pod -n $NAMESPACE -l app=$source -o jsonpath='{.items[0].metadata.name}') -c $source -- \
+        timeout 5 bash -c "echo > /dev/tcp/$target_service/$port" 2>/dev/null
+      
+      local result=$?
+      if [[ $result -eq 0 ]]; then
+        echo "Connection from $source to $target:$port successful!"
+        return 0
+      else
+        echo "Connection from $source to $target:$port failed!"
+        return 1
+      fi
+    }
+    
+    # Main monitoring loop
+    while true; do
+      echo "Starting connectivity check..."
+      
+      # Initialize result JSON
+      cat > $RESULT_FILE <<EOF
+    {
+      "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+      "connectivity": {
+        "overall_status": "checking",
+        "components": {}
+      }
+    }
+    EOF
+      
+      # Get all component pods
+      components=({{ range .Values.config.componentsToMonitor }}{{ . | quote }}{{ if ne . (last $.Values.config.componentsToMonitor) }}, {{ end }}{{ end }})
+      
+      # Loop through all component combinations
+      overall_success=true
+      for source in "${components[@]}"; do
+        success=true
+        component_data="{}"
+        
+        # Add component to result
+        jq --arg source "$source" '.connectivity.components[$source] = {"status": "checking", "connections": {}}' $RESULT_FILE > /tmp/connectivity.json
+        mv /tmp/connectivity.json $RESULT_FILE
+        
+        for target in "${components[@]}"; do
+          if [[ "$source" != "$target" ]]; then
+            if check_connectivity "$source" "$target" ""; then
+              # Update connection status to success
+              jq --arg source "$source" --arg target "$target" '.connectivity.components[$source].connections[$target] = {"status": "connected"}' $RESULT_FILE > /tmp/connectivity.json
+              mv /tmp/connectivity.json $RESULT_FILE
+            else
+              success=false
+              overall_success=false
+              # Update connection status to failed
+              jq --arg source "$source" --arg target "$target" '.connectivity.components[$source].connections[$target] = {"status": "disconnected"}' $RESULT_FILE > /tmp/connectivity.json
+              mv /tmp/connectivity.json $RESULT_FILE
+            fi
+          fi
+        done
+        
+        # Update component status
+        if $success; then
+          jq --arg source "$source" '.connectivity.components[$source].status = "connected"' $RESULT_FILE > /tmp/connectivity.json
+        else
+          jq --arg source "$source" '.connectivity.components[$source].status = "partial"' $RESULT_FILE > /tmp/connectivity.json
+        fi
+        mv /tmp/connectivity.json $RESULT_FILE
+      done
+      
+      # Update overall status
+      if $overall_success; then
+        jq '.connectivity.overall_status = "healthy"' $RESULT_FILE > /tmp/connectivity.json
+      else
+        jq '.connectivity.overall_status = "degraded"' $RESULT_FILE > /tmp/connectivity.json
+      fi
+      mv /tmp/connectivity.json $RESULT_FILE
+      
+      echo "Connectivity check completed. Sleeping for $SCAN_INTERVAL seconds..."
+      sleep $SCAN_INTERVAL
+    done

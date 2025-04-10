@@ -1,0 +1,101 @@
+# Source Telegraf Deployment - EMQX to Kafka
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-telegraf-source
+  labels:
+    app: {{ .Release.Name }}-telegraf-source
+    component: "source"
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.source.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-telegraf-source
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-telegraf-source
+        component: "source"
+        {{- include "chirpstack.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Release.Name }}-telegraf
+      {{- end }}
+      containers:
+      - name: telegraf-source
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        volumeMounts:
+        - name: telegraf-source-config
+          mountPath: /etc/telegraf/telegraf.conf
+          subPath: telegraf.conf
+        resources:
+          {{- toYaml .Values.source.resources | default .Values.resources | nindent 12 }}
+      volumes:
+      - name: telegraf-source-config
+        configMap:
+          name: {{ .Release.Name }}-telegraf-source-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# Sink Telegraf Deployment - Kafka to TimescaleDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-telegraf-sink
+  labels:
+    app: {{ .Release.Name }}-telegraf-sink
+    component: "sink"
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sink.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-telegraf-sink
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-telegraf-sink
+        component: "sink"
+        {{- include "chirpstack.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Release.Name }}-telegraf
+      {{- end }}
+      containers:
+      - name: telegraf-sink
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        volumeMounts:
+        - name: telegraf-sink-config
+          mountPath: /etc/telegraf/telegraf.conf
+          subPath: telegraf.conf
+        resources:
+          {{- toYaml .Values.sink.resources | default .Values.resources | nindent 12 }}
+      volumes:
+      - name: telegraf-sink-config
+        configMap:
+          name: {{ .Release.Name }}-telegraf-sink-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

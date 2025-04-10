@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-rainforest-simulator
+  labels:
+    app: {{ .Release.Name }}-rainforest-simulator
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-rainforest-simulator
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-rainforest-simulator
+    spec:
+      containers:
+        - name: simulator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              apk add --no-cache py3-pip
+              pip install paho-mqtt
+              cp /simulator/simulator.py /app/
+              cd /app
+              chmod +x simulator.py
+              python simulator.py
+          env:
+            - name: MQTT_HOST
+              value: "{{ .Release.Name }}-{{ .Values.config.mqtt.host }}"
+            - name: MQTT_PORT
+              value: "{{ .Values.config.mqtt.port }}"
+            - name: MQTT_USERNAME
+              value: "{{ .Values.config.mqtt.username }}"
+            - name: MQTT_PASSWORD
+              value: "{{ .Values.config.mqtt.password }}"
+            - name: MQTT_CLIENT_ID
+              value: "{{ .Values.config.mqtt.clientId }}"
+            - name: MQTT_TOPIC_PREFIX
+              value: "{{ .Values.config.mqtt.topic }}"
+            - name: SENSOR_COUNT
+              value: "{{ .Values.config.simulation.sensorCount }}"
+            - name: INTERVAL_SECONDS
+              value: "{{ .Values.config.simulation.intervalSeconds }}"
+            - name: MIN_LAT
+              value: "{{ .Values.config.simulation.region.minLat }}"
+            - name: MAX_LAT
+              value: "{{ .Values.config.simulation.region.maxLat }}"
+            - name: MIN_LON
+              value: "{{ .Values.config.simulation.region.minLon }}"
+            - name: MAX_LON
+              value: "{{ .Values.config.simulation.region.maxLon }}"
+          volumeMounts:
+            - name: simulator-script
+              mountPath: /simulator
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: simulator-script
+          configMap:
+            name: {{ .Release.Name }}-rainforest-simulator

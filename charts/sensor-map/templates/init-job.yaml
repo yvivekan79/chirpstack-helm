@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-sensor-map-init-db
+  labels:
+    app: {{ .Release.Name }}-sensor-map
+    {{- include "chirpstack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: {{ .Release.Name }}-sensor-map-init-db
+      labels:
+        app: {{ .Release.Name }}-sensor-map
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sensor-map
+      restartPolicy: OnFailure
+      containers:
+      - name: init-db
+        image: postgres:14-alpine
+        command: ["/bin/sh", "-c", "/scripts/init-db.sh"]
+        env:
+        - name: DB_HOST
+          value: "{{ .Values.config.database.host }}"
+        - name: DB_PORT
+          value: "{{ .Values.config.database.port }}"
+        - name: DB_NAME
+          value: "{{ .Values.config.database.database }}"
+        - name: DB_USER
+          value: "{{ .Values.config.database.user }}"
+        {{- if .Values.config.database.existingSecret }}
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.config.database.existingSecret }}
+              key: {{ .Values.config.database.existingSecretKey }}
+        {{- else }}
+        - name: DB_PASSWORD
+          value: "postgres"
+        {{- end }}
+        volumeMounts:
+        - name: init-scripts
+          mountPath: /scripts
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: {{ .Release.Name }}-sensor-map-init-db
+          defaultMode: 0755

@@ -1,0 +1,44 @@
+# Default values for lwnsimulator
+image:
+  repository: registry.gitlab.com/lwnsimulator/lorawan-simulator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Number of simulated LoRaWAN nodes
+simulatedNodes: 5
+
+# Gateway configuration
+gateway:
+  eui: "b827ebfffe13cee4"  # Example Gateway EUI, should be changed for production
+
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+  limits:
+    memory: "128Mi"
+    cpu: "100m"
+
+# Connection parameters for ChirpStack components
+chirpstack:
+  # Gateway Bridge configuration
+  gatewayBridge:
+    host: chirpstack-chirpstack-gateway-bridge
+    port: 1700
+  
+  # Application Server configuration (for API integration)
+  applicationServer:
+    host: chirpstack-chirpstack-application-server
+    port: 8080
+    apiKey: ""  # API key for Application Server if needed
+
+# Simulation parameters
+simulation:
+  # Time between uplinks in seconds
+  uplinkInterval: 60
+  # Join type: OTAA or ABP
+  joinType: "OTAA"
+  # Device class: A, B, or C
+  deviceClass: "A"
+  # Data rate: 0-5 (DR0-DR5)
+  dataRate: 0

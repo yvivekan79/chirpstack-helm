@@ -1,0 +1,6 @@
+apiVersion: v2
+name: chirpstack-application-server
+description: A Helm chart for ChirpStack Application Server
+type: application
+version: 0.1.0
+appVersion: "3.17.3"

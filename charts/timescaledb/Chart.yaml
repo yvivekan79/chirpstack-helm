@@ -1,0 +1,8 @@
+apiVersion: v2
+name: timescaledb
+description: A Helm chart for TimescaleDB time series database
+type: application
+version: 0.1.0
+appVersion: "2.10.3"
+maintainers:
+  - name: Chirpstack Helm Chart Maintainers

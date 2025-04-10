@@ -1,0 +1,67 @@
+apiVersion: v2
+name: chirpstack-helm
+description: A Helm chart for deploying the complete ChirpStack IoT stack with EMQX/Kafka as the message broker on Kubernetes
+type: application
+version: 0.1.1
+appVersion: "3.17.3"
+icon: https://www.chirpstack.io/img/logo.png
+dependencies:
+  - name: postgresql
+    version: 0.1.0
+    condition: postgresql.enabled
+    repository: file://charts/postgresql
+  - name: redis
+    version: 0.1.0
+    condition: redis.enabled
+    repository: file://charts/redis
+  - name: emqx
+    version: 0.1.0
+    condition: emqx.enabled
+    repository: file://charts/emqx
+  - name: kafka
+    version: 0.1.0
+    condition: kafka.enabled
+    repository: file://charts/kafka
+  - name: chirpstack-gateway-bridge
+    version: 0.1.0
+    condition: chirpstack-gateway-bridge.enabled
+    repository: file://charts/chirpstack-gateway-bridge
+  - name: chirpstack-network-server
+    version: 0.1.0
+    condition: chirpstack-network-server.enabled
+    repository: file://charts/chirpstack-network-server
+  - name: chirpstack-application-server
+    version: 0.1.0
+    condition: chirpstack-application-server.enabled
+    repository: file://charts/chirpstack-application-server
+  - name: lwnsimulator
+    version: 0.1.0
+    condition: lwnsimulator.enabled
+    repository: file://charts/lwnsimulator
+  - name: telegraf
+    version: 0.1.0
+    condition: telegraf.enabled
+    repository: file://charts/telegraf
+  - name: timescaledb
+    version: 0.1.0
+    condition: timescaledb.enabled
+    repository: file://charts/timescaledb
+  - name: connectivity-fairy
+    version: 0.1.0
+    condition: connectivity-fairy.enabled
+    repository: file://charts/connectivity-fairy
+  - name: sensor-map
+    version: 0.1.0
+    condition: sensor-map.enabled
+    repository: file://charts/sensor-map
+  - name: geo-enrichment-service
+    version: 0.1.0
+    condition: geo-enrichment-service.enabled
+    repository: file://charts/geo-enrichment-service
+  - name: rainforest-simulator
+    version: 0.1.0
+    condition: rainforest-simulator.enabled
+    repository: file://charts/rainforest-simulator
+maintainers:
+  - name: IoT Admin
+    email: admin@example.com

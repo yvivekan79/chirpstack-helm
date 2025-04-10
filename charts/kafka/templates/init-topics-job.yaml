@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-kafka-init-topics
+  labels:
+    app: {{ .Release.Name }}-kafka-init-topics
+    {{- include "chirpstack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-kafka-init-topics
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-kafka
+        image: confluentinc/cp-kafka:7.3.0
+        command: ['sh', '-c', 'until echo "" | kafka-broker-api-versions.sh --bootstrap-server {{ .Release.Name }}-kafka:9092; do echo "Waiting for Kafka to be ready..."; sleep 5; done;']
+      containers:
+      - name: init-topics
+        image: confluentinc/cp-kafka:7.3.0
+        command:
+        - sh
+        - -c
+        - |
+          cd /usr/bin
+          
+          # Create standard topics for ChirpStack data
+          echo "Creating kafka topics for ChirpStack..."
+          ./kafka-topics.sh --create --if-not-exists --bootstrap-server {{ .Release.Name }}-kafka:9092 --partitions 3 --replication-factor 1 --topic lorawan-device-data
+          ./kafka-topics.sh --create --if-not-exists --bootstrap-server {{ .Release.Name }}-kafka:9092 --partitions 3 --replication-factor 1 --topic realtime-gr-dss-airqualitysensor
+          ./kafka-topics.sh --create --if-not-exists --bootstrap-server {{ .Release.Name }}-kafka:9092 --partitions 3 --replication-factor 1 --topic realtime-gr-dss-temperaturehumiditysensor
+          
+          # Create Amazon rainforest simulation topic
+          echo "Creating Amazon rainforest simulation topic..."
+          ./kafka-topics.sh --create --if-not-exists --bootstrap-server {{ .Release.Name }}-kafka:9092 --partitions 3 --replication-factor 1 --topic amazon-rainforest-simulate
+          
+          # List all topics for verification
+          echo "Available topics:"
+          ./kafka-topics.sh --list --bootstrap-server {{ .Release.Name }}-kafka:9092

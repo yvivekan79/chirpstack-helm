@@ -1,0 +1,693 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-telegraf-config
+  labels:
+    app: {{ .Release.Name }}-telegraf
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  telegraf.conf: |
+    # Telegraf Configuration
+    [agent]
+      interval = "{{ .Values.config.global.interval }}"
+      round_interval = {{ .Values.config.global.round_interval }}
+      metric_batch_size = {{ .Values.config.global.metric_batch_size }}
+      metric_buffer_limit = {{ .Values.config.global.metric_buffer_limit }}
+      collection_jitter = "{{ .Values.config.global.collection_jitter }}"
+      flush_jitter = "{{ .Values.config.global.flush_jitter }}"
+      precision = "{{ .Values.config.global.precision }}"
+      debug = {{ .Values.config.global.debug }}
+      quiet = {{ .Values.config.global.quiet }}
+      logfile = "{{ .Values.config.global.logfile }}"
+    
+    {{- if .Values.config.mqttInput.enabled }}
+    # Read MQTT messages from EMQX
+    [[inputs.mqtt_consumer]]
+      servers = {{ .Values.config.mqttInput.servers | toJson }}
+      topics = {{ .Values.config.mqttInput.topics | toJson }}
+      data_format = "{{ .Values.config.mqttInput.data_format }}"
+      client_id = "telegraf-chirpstack-consumer"
+      {{- if .Values.config.mqttInput.username }}
+      username = "{{ .Values.config.mqttInput.username }}"
+      {{- end }}
+      {{- if .Values.config.mqttInput.password }}
+      password = "{{ .Values.config.mqttInput.password }}"
+      {{- end }}
+      
+    # Amazon rainforest simulation data consumer
+    [[inputs.mqtt_consumer]]
+      servers = {{ .Values.config.mqttInput.servers | toJson }}
+      topics = ["amazon-rainforest/simulate/#"]
+      client_id = "telegraf-amazon-simulation-consumer"
+      data_format = "json"
+      {{- if .Values.config.mqttInput.username }}
+      username = "{{ .Values.config.mqttInput.username }}"
+      {{- end }}
+      {{- if .Values.config.mqttInput.password }}
+      password = "{{ .Values.config.mqttInput.password }}"
+      {{- end }}
+      
+      # Payload processor for ChirpStack data
+      [inputs.mqtt_consumer.json_v2]
+        measurement_name = "chirpstack_data"
+        
+        # Extract the rxpk data
+        [[inputs.mqtt_consumer.json_v2.object]]
+          path = "rxpk"
+          optional = true
+          
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.time"
+            rename = "gateway_time"
+            type = "string"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.freq"
+            rename = "frequency"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.rssi"
+            rename = "rssi"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.lsnr"
+            rename = "snr"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.datr"
+            rename = "data_rate"
+            type = "string"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "0.size"
+            rename = "payload_size"
+            type = "int"
+            
+        # Extract the stat data
+        [[inputs.mqtt_consumer.json_v2.object]]
+          path = "stat"
+          optional = true
+          
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "time"
+            rename = "stat_time"
+            type = "string"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "lati"
+            rename = "latitude"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "long"
+            rename = "longitude"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "alti"
+            rename = "altitude"
+            type = "float"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "rxnb"
+            rename = "packets_received"
+            type = "int"
+            
+          [[inputs.mqtt_consumer.json_v2.object.field]]
+            path = "rxok"
+            rename = "packets_valid"
+            type = "int"
+    {{- end }}
+    
+    {{- if .Values.config.kafkaOutput.enabled }}
+    # Write metrics to Kafka
+    [[outputs.kafka]]
+      brokers = {{ .Values.config.kafkaOutput.brokers | toJson }}
+      topic = "{{ .Values.config.kafkaOutput.topic }}"
+      data_format = "json"
+      
+      # Route specific device data to appropriate topics based on device type
+      [outputs.kafka.topic_suffix]
+        method = "measurement"
+        keys = ["device_type"]
+        separator = "-"
+        
+      # Route air quality sensor data
+      [outputs.kafka.route_by_tag."device_type"]
+        airqualitysensor = "realtime-gr-dss-airqualitysensor"
+        temperaturehumiditysensor = "realtime-gr-dss-temperaturehumiditysensor"
+    {{- end }}
+    
+    # Add HTTP input for geospatial reference data API
+    [[inputs.http]]
+      name_override = "geo_reference_data"
+      urls = ["http://{{ .Release.Name }}-geo-enrichment-service:8080/api/locations"]
+      method = "GET"
+      headers = { "Accept" = "application/json" }
+      data_format = "json"
+      
+      # Cache the geospatial data for 1 hour to reduce API calls
+      interval = "1h"
+      
+      # Parse geospatial reference data (locations of interest)
+      [inputs.http.json_v2]
+        [[inputs.http.json_v2.object]]
+          path = "@this"
+          included_keys = ["id", "name", "type", "location", "radius", "properties"]
+          
+          [[inputs.http.json_v2.object.field]]
+            path = "id"
+            type = "string"
+            
+          [[inputs.http.json_v2.object.field]]
+            path = "name"
+            type = "string"
+            
+          [[inputs.http.json_v2.object.field]]
+            path = "type"
+            type = "string"
+            
+          [[inputs.http.json_v2.object.field]]
+            path = "location.latitude"
+            type = "float"
+            rename = "lat"
+            
+          [[inputs.http.json_v2.object.field]]
+            path = "location.longitude"
+            type = "float"
+            rename = "lon"
+            
+          [[inputs.http.json_v2.object.field]]
+            path = "radius"
+            type = "float"
+            
+          # Parse any custom properties for the location
+          [[inputs.http.json_v2.object.tags]]
+            path = "properties"
+            
+    {{- if .Values.config.kafkaInput.enabled }}
+    # Read metrics from Kafka
+    [[inputs.kafka_consumer]]
+      brokers = {{ .Values.config.kafkaInput.brokers | toJson }}
+      topics = ["realtime-gr-dss-airqualitysensor", "realtime-gr-dss-temperaturehumiditysensor"]
+      consumer_group = "{{ .Values.config.kafkaInput.consumer_group }}"
+      data_format = "json"
+      
+      # Process different metrics based on topic
+      [inputs.kafka_consumer.topic_tag]
+        key = "topic"
+        
+      # Handle fields and tags from various JSON structures
+      [inputs.kafka_consumer.json_v2]
+        # Base fields for all sensor types
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "time"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "device_id"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "gateway_id"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "rssi"
+          type = "float"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "snr"
+          type = "float"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "latitude"
+          type = "float"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "longitude"
+          type = "float"
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "altitude"
+          type = "float"
+          
+        # Air quality specific fields
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "co2"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "co"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "no2"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "o3"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "pm10"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "pm25"
+          type = "float"
+          optional = true
+          
+        # Temperature-humidity-pressure specific fields
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "temperature"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "humidity"
+          type = "float"
+          optional = true
+          
+        [[inputs.kafka_consumer.json_v2.field]]
+          path = "pressure"
+          type = "float"
+          optional = true
+    {{- end }}
+    
+    # Amazon rainforest simulation data processor
+    [[processors.starlark]]
+      namepass = ["mqtt_consumer"]
+      source = '''
+def apply(metric):
+    # Only process metrics from the Amazon rainforest simulation topic
+    if metric.tags.get("topic", "").startswith("amazon-rainforest/simulate/"):
+        # Set measurement name
+        metric.name = "amazon_rainforest_data"
+        
+        # Tag with data source
+        metric.tags["data_source"] = "simulation"
+        
+        # Extract location if available
+        if "location" in metric.fields:
+            location = metric.fields["location"]
+            if isinstance(location, dict):
+                if "latitude" in location:
+                    metric.fields["latitude"] = float(location["latitude"])
+                if "longitude" in location:
+                    metric.fields["longitude"] = float(location["longitude"])
+                if "altitude" in location:
+                    metric.fields["altitude"] = float(location["altitude"])
+            # Remove the original location object to avoid schema issues
+            del metric.fields["location"]
+        
+        # Extract sensor type
+        if "sensor_type" in metric.fields:
+            metric.tags["device_type"] = metric.fields["sensor_type"]
+        elif "type" in metric.fields:
+            metric.tags["device_type"] = metric.fields["type"]
+        
+        # Extract forest/environmental context
+        if "forest_type" in metric.fields:
+            metric.tags["forest_type"] = metric.fields["forest_type"]
+        if "ecosystem_zone" in metric.fields:
+            metric.tags["ecosystem_zone"] = metric.fields["ecosystem_zone"]
+        if "conservation_status" in metric.fields:
+            metric.tags["conservation_status"] = metric.fields["conservation_status"]
+        
+        # Set measurement timestamp if provided
+        if "timestamp" in metric.fields:
+            try:
+                metric.time = metric.fields["timestamp"]
+                # Clean up fields
+                del metric.fields["timestamp"]
+            except:
+                # If timestamp can't be parsed, keep the original
+                pass
+    
+    return metric
+'''
+
+    # Add Starlark processor for geospatial enrichment
+    [[processors.starlark]]
+      namepass = ["chirpstack_data"]
+      source = '''
+def apply(metric):
+    # Skip if latitude or longitude are missing
+    if "latitude" not in metric.fields or "longitude" not in metric.fields:
+        return metric
+        
+    # Get the current lat/lon from the sensor
+    sensor_lat = metric.fields["latitude"]
+    sensor_lon = metric.fields["longitude"]
+    
+    # Find the nearest locations and areas
+    metric.tags["nearest_location"] = ""
+    metric.tags["location_type"] = ""
+    metric.tags["in_locations"] = ""
+    metric.fields["distance_to_nearest"] = 99999.0
+    
+    # First try to get data directly from geo-enrichment service
+    try:
+        # Use the http_geo input plugin to get nearby locations
+        geo_data = []
+        for geo_metric in METRICS.get('geo_reference_data', []):
+            if "lat" in geo_metric.fields and "lon" in geo_metric.fields:
+                geo_data.append(geo_metric)
+        
+        # Find geospatial context information
+        in_locations = []
+        for geo_metric in geo_data:
+            geo_lat = geo_metric.fields["lat"]
+            geo_lon = geo_metric.fields["lon"]
+            geo_radius = geo_metric.fields.get("radius", 100.0)  # Default 100m radius
+            
+            # Calculate haversine distance (approximate distance in meters)
+            earth_radius = 6371000.0  # Earth radius in meters
+            from math import sin, cos, sqrt, atan2, radians
+            
+            lat1, lon1 = radians(sensor_lat), radians(sensor_lon)
+            lat2, lon2 = radians(geo_lat), radians(geo_lon)
+            
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            
+            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+            c = 2 * atan2(sqrt(a), sqrt(1-a))
+            distance = earth_radius * c
+            
+            # Update nearest location if this is closer
+            if distance < metric.fields["distance_to_nearest"]:
+                metric.fields["distance_to_nearest"] = distance
+                metric.tags["nearest_location"] = geo_metric.fields.get("name", "")
+                metric.tags["location_type"] = geo_metric.fields.get("type", "")
+                
+                # Add location properties as tags if they exist
+                for tag_key, tag_value in geo_metric.tags.items():
+                    metric.tags["location_" + tag_key] = tag_value
+            
+            # Check if sensor is inside this location (based on radius)
+            if distance <= geo_radius:
+                in_locations.append(geo_metric.fields.get("name", ""))
+                
+                # Add "in_" tag for each location type for easier filtering
+                location_type = geo_metric.fields.get("type", "")
+                if location_type:
+                    metric.tags["in_" + location_type] = "true"
+        
+        # Join all containing locations into a comma-separated list
+        metric.tags["in_locations"] = ",".join(in_locations)
+    except Exception as e:
+        print(f"Error in geo-enrichment processing: {e}")
+        # Continue with basic processing even if geo-enrichment fails
+    
+    # Add Amazon rainforest ecosystem classification based on altitude (if available)
+    if "altitude" in metric.fields:
+        altitude = metric.fields["altitude"]
+        if altitude < 100:
+            metric.tags["ecosystem_zone"] = "varzea_floodplain"
+            metric.tags["forest_type"] = "seasonally_flooded"
+        elif altitude < 200:
+            metric.tags["ecosystem_zone"] = "lowland_rainforest"
+            metric.tags["forest_type"] = "terra_firme"
+        elif altitude < 500:
+            metric.tags["ecosystem_zone"] = "moist_forest"
+            metric.tags["forest_type"] = "terra_firme"
+        elif altitude < 1000:
+            metric.tags["ecosystem_zone"] = "foothill_forest"
+            metric.tags["forest_type"] = "submontane"
+        elif altitude < 1500:
+            metric.tags["ecosystem_zone"] = "cloud_forest"
+            metric.tags["forest_type"] = "montana"
+        else:
+            metric.tags["ecosystem_zone"] = "montane_forest"
+            metric.tags["forest_type"] = "high_altitude"
+    
+    # Add Brazilian Amazon biome classification based on location type
+    if "location_type" in metric.tags:
+        loc_type = metric.tags["location_type"]
+        if loc_type == "protected_forest":
+            metric.tags["conservation_status"] = "protected_area"
+            metric.tags["monitoring_priority"] = "high"
+        elif loc_type == "indigenous_land":
+            metric.tags["conservation_status"] = "indigenous_territory"
+            metric.tags["monitoring_priority"] = "high"
+        elif loc_type == "waterway":
+            metric.tags["ecosystem_subtype"] = "aquatic"
+            metric.tags["hydrological_system"] = "amazon_basin"
+        elif loc_type == "urban":
+            metric.tags["human_impact"] = "urban_development"
+            metric.tags["monitoring_priority"] = "medium"
+        elif loc_type == "research":
+            metric.tags["scientific_relevance"] = "high"
+            metric.tags["monitoring_priority"] = "high"
+    
+    # Add air quality index calculation if this is an air quality sensor
+    if "co2" in metric.fields or "pm25" in metric.fields or "pm10" in metric.fields:
+        # Tag this as an air quality sensor for Kafka routing
+        metric.tags["device_type"] = "airqualitysensor"
+        
+        # Calculate simple air quality index based on available parameters
+        aqi = 0
+        aqi_count = 0
+        
+        # PM2.5 contribution (0-500 scale, higher is worse)
+        if "pm25" in metric.fields:
+            pm25 = metric.fields["pm25"]
+            if pm25 > 250:  # Hazardous
+                aqi += 5
+            elif pm25 > 150:  # Very unhealthy
+                aqi += 4
+            elif pm25 > 55:  # Unhealthy
+                aqi += 3
+            elif pm25 > 35:  # Unhealthy for sensitive groups
+                aqi += 2
+            elif pm25 > 12:  # Moderate
+                aqi += 1
+            aqi_count += 1
+            
+        # PM10 contribution
+        if "pm10" in metric.fields:
+            pm10 = metric.fields["pm10"]
+            if pm10 > 425:  # Hazardous
+                aqi += 5
+            elif pm10 > 255:  # Very unhealthy
+                aqi += 4
+            elif pm10 > 155:  # Unhealthy
+                aqi += 3
+            elif pm10 > 55:  # Unhealthy for sensitive groups
+                aqi += 2
+            elif pm10 > 12:  # Moderate
+                aqi += 1
+            aqi_count += 1
+            
+        # CO2 contribution (ppm)
+        if "co2" in metric.fields:
+            co2 = metric.fields["co2"]
+            if co2 > 5000:  # Hazardous
+                aqi += 5
+            elif co2 > 2000:  # Very unhealthy
+                aqi += 4
+            elif co2 > 1000:  # Unhealthy
+                aqi += 3
+            elif co2 > 800:  # Unhealthy for sensitive groups
+                aqi += 2
+            elif co2 > 600:  # Moderate
+                aqi += 1
+            aqi_count += 1
+            
+        # Calculate average AQI if we have data
+        if aqi_count > 0:
+            aqi_value = aqi / aqi_count
+            
+            # Store AQI as a field
+            metric.fields["aqi"] = aqi_value
+            
+            # Store AQI category as a tag
+            if aqi_value >= 4:
+                metric.tags["aqi_category"] = "hazardous"
+            elif aqi_value >= 3:
+                metric.tags["aqi_category"] = "unhealthy"
+            elif aqi_value >= 2:
+                metric.tags["aqi_category"] = "moderate"
+            elif aqi_value >= 1:
+                metric.tags["aqi_category"] = "acceptable"
+            else:
+                metric.tags["aqi_category"] = "good"
+    
+    # Tag temperature/humidity sensors for Kafka routing
+    elif "temperature" in metric.fields or "humidity" in metric.fields:
+        metric.tags["device_type"] = "temperaturehumiditysensor"
+    
+    return metric
+'''
+
+    # Add execd processor for PostGIS spatial calculations (optional, for more complex operations)
+    # [[processors.execd]]
+    #   command = ["/usr/local/bin/spatial-processor"]
+    #   namepass = ["chirpstack_data"]
+    
+    {{- if .Values.config.timescaledbOutput.enabled }}
+    # Write metrics to TimescaleDB
+    [[outputs.postgresql]]
+      address = "postgres://{{ .Values.config.timescaledbOutput.username }}:{{ .Values.config.timescaledbOutput.password }}@{{ .Values.config.timescaledbOutput.address }}/{{ .Values.config.timescaledbOutput.database }}"
+      table = "{{ .Values.config.timescaledbOutput.table }}"
+      
+      # Table routing based on Kafka topic
+      [outputs.postgresql.table_routing]
+        topic_realtime_gr_dss_airqualitysensor = "airqualitysensor"
+        topic_realtime_gr_dss_temperaturehumiditysensor = "temperaturehumiditysensor"
+      {{- if .Values.config.timescaledbOutput.hypertable }}
+      # Create a hypertable on the first execution
+      create_templates = [
+        '''
+        CREATE EXTENSION IF NOT EXISTS timescaledb;
+        
+        -- Create the air quality sensor table with geospatial context
+        CREATE TABLE IF NOT EXISTS airqualitysensor(
+          time TIMESTAMPTZ NOT NULL,
+          device_id TEXT,
+          gateway_id TEXT,
+          rssi INTEGER,
+          snr DOUBLE PRECISION,
+          latitude DOUBLE PRECISION,
+          longitude DOUBLE PRECISION,
+          altitude DOUBLE PRECISION,
+          co2 DOUBLE PRECISION,
+          co DOUBLE PRECISION,
+          no2 DOUBLE PRECISION,
+          o3 DOUBLE PRECISION,
+          pm10 DOUBLE PRECISION,
+          pm25 DOUBLE PRECISION,
+          -- Geospatial fields
+          distance_to_nearest DOUBLE PRECISION,
+          -- Tags stored as additional columns
+          nearest_location TEXT,
+          location_type TEXT,
+          in_locations TEXT,
+          -- Amazon rainforest specific classifications
+          ecosystem_zone TEXT,
+          forest_type TEXT,
+          conservation_status TEXT,
+          monitoring_priority TEXT,
+          hydrological_system TEXT,
+          human_impact TEXT,
+          ecosystem_subtype TEXT,
+          scientific_relevance TEXT,
+          -- PostGIS geometry column for spatial queries
+          location geography(Point, 4326),
+          UNIQUE(time, device_id)
+        );
+        SELECT create_hypertable('airqualitysensor', 'time', 
+                              chunk_time_interval => INTERVAL '1h',
+                              if_not_exists => TRUE);
+                              
+        -- Create index on the geography column for spatial queries
+        CREATE INDEX IF NOT EXISTS airqualitysensor_location_idx 
+        ON airqualitysensor USING GIST (location);
+        
+        -- Create a trigger to automatically populate the PostGIS location column
+        CREATE OR REPLACE FUNCTION update_airqualitysensor_location()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            -- Create a geography point from latitude and longitude
+            IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+                NEW.location = ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        
+        DROP TRIGGER IF EXISTS trigger_update_airqualitysensor_location ON airqualitysensor;
+        CREATE TRIGGER trigger_update_airqualitysensor_location
+        BEFORE INSERT OR UPDATE ON airqualitysensor
+        FOR EACH ROW
+        EXECUTE FUNCTION update_airqualitysensor_location();
+                              
+        -- Create the temperature humidity sensor table with geospatial context
+        CREATE TABLE IF NOT EXISTS temperaturehumiditysensor(
+          time TIMESTAMPTZ NOT NULL,
+          device_id TEXT,
+          gateway_id TEXT,
+          rssi INTEGER,
+          snr DOUBLE PRECISION,
+          latitude DOUBLE PRECISION,
+          longitude DOUBLE PRECISION,
+          altitude DOUBLE PRECISION,
+          temperature DOUBLE PRECISION,
+          humidity DOUBLE PRECISION,
+          pressure DOUBLE PRECISION,
+          -- Geospatial fields
+          distance_to_nearest DOUBLE PRECISION,
+          -- Tags stored as additional columns
+          nearest_location TEXT,
+          location_type TEXT,
+          in_locations TEXT,
+          -- Amazon rainforest specific classifications
+          ecosystem_zone TEXT,
+          forest_type TEXT,
+          conservation_status TEXT,
+          monitoring_priority TEXT,
+          hydrological_system TEXT,
+          human_impact TEXT,
+          ecosystem_subtype TEXT,
+          scientific_relevance TEXT,
+          -- PostGIS geometry column for spatial queries
+          location geography(Point, 4326),
+          UNIQUE(time, device_id)
+        );
+        SELECT create_hypertable('temperaturehumiditysensor', 'time', 
+                              chunk_time_interval => INTERVAL '1h',
+                              if_not_exists => TRUE);
+                              
+        -- Create index on the geography column for spatial queries
+        CREATE INDEX IF NOT EXISTS temperaturehumiditysensor_location_idx 
+        ON temperaturehumiditysensor USING GIST (location);
+        
+        -- Create a trigger to automatically populate the PostGIS location column
+        CREATE OR REPLACE FUNCTION update_temperaturehumiditysensor_location()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            -- Create a geography point from latitude and longitude
+            IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+                NEW.location = ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        
+        DROP TRIGGER IF EXISTS trigger_update_temperaturehumiditysensor_location ON temperaturehumiditysensor;
+        CREATE TRIGGER trigger_update_temperaturehumiditysensor_location
+        BEFORE INSERT OR UPDATE ON temperaturehumiditysensor
+        FOR EACH ROW
+        EXECUTE FUNCTION update_temperaturehumiditysensor_location();
+                              
+        -- Create the general device data table (for backward compatibility)
+        CREATE TABLE IF NOT EXISTS {{ .Values.config.timescaledbOutput.table }}(
+          time TIMESTAMPTZ NOT NULL,
+          device_id TEXT,
+          application_id TEXT,
+          measurement TEXT,
+          value DOUBLE PRECISION,
+          latitude DOUBLE PRECISION,
+          longitude DOUBLE PRECISION,
+          altitude DOUBLE PRECISION,
+          rssi INTEGER,
+          snr DOUBLE PRECISION,
+          gateway_id TEXT,
+          data TEXT,
+          UNIQUE(time, device_id, measurement)
+        );
+        SELECT create_hypertable('{{ .Values.config.timescaledbOutput.table }}', 
+                              '{{ .Values.config.timescaledbOutput.hypertable_partition_by }}', 
+                              chunk_time_interval => INTERVAL '{{ .Values.config.timescaledbOutput.hypertable_chunk_time_interval }}',
+                              if_not_exists => TRUE);
+        '''
+      ]
+      {{- end }}
+    {{- end }}

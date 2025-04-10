@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-chirpstack-application-server-config
+  labels:
+    app: {{ .Release.Name }}-chirpstack-application-server
+data:
+  chirpstack-application-server.toml: |
+    # ChirpStack Application Server configuration
+
+    # PostgreSQL settings
+    [postgresql]
+    dsn = "{{ .Values.config.postgresql.dsn | default (printf "postgres://chirpstack:${PGPASSWORD}@%s-postgresql:5432/chirpstack_as?sslmode=disable" .Release.Name) }}"
+
+    # Redis settings
+    [redis]
+    url = "{{ .Values.config.redis.url | default (printf "redis://%s-redis:6379" .Release.Name) }}"
+
+    # Application-server settings
+    [application_server]
+    
+    # API interface
+    [application_server.api]
+    public_host = "{{ .Values.config.application_server.api.public_host }}"
+    bind = "0.0.0.0:8001"
+
+    # External API interface
+    [application_server.external_api]
+    bind = "0.0.0.0:8080"
+    jwt_secret = "{{ .Values.config.application_server.external_api.jwt_secret }}"
+
+    # MQTT integration
+    [application_server.integration.mqtt]
+    server = "{{ .Values.config.application_server.integration.mqtt.server | default (printf "tcp://%s-emqx:1883" .Release.Name) }}"
+    event_topic_template = "application/{{ .ApplicationID }}/device/{{ .DevEUI }}/event/{{ .EventType }}"
+    command_topic_template = "application/{{ .ApplicationID }}/device/{{ .DevEUI }}/command/{{ .CommandType }}"
+
+    # Join-server configuration
+    [join_server]
+    enabled = {{ .Values.config.join_server.enabled }}
+    bind = "0.0.0.0:8003"
+
+    # Network-server API
+    [network_server]
+    server = "{{ .Values.config.network_server.server | default (printf "%s-chirpstack-network-server:8000" .Release.Name) }}"

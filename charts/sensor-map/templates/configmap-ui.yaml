@@ -1,0 +1,987 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-sensor-map-ui
+  labels:
+    app: {{ .Release.Name }}-sensor-map
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>IoT Sensor Map</title>
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+      <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+      <style>
+        body, html {
+          margin: 0;
+          padding: 0;
+          font-family: Arial, sans-serif;
+          height: 100%;
+          width: 100%;
+          overflow: hidden;
+        }
+        #app {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
+        header {
+          background-color: #2c3e50;
+          color: white;
+          padding: 10px 20px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .header-title {
+          font-size: 24px;
+          font-weight: bold;
+        }
+        .header-controls {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .main-container {
+          display: flex;
+          flex: 1;
+          overflow: hidden;
+        }
+        #map {
+          flex: 1;
+          z-index: 1;
+        }
+        .sidebar {
+          width: 300px;
+          background-color: #f8f9fa;
+          padding: 15px;
+          overflow-y: auto;
+          box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+          z-index: 2;
+        }
+        .sensor-type-filter {
+          margin-bottom: 20px;
+        }
+        .sensor-list {
+          margin-top: 20px;
+        }
+        .sensor-item {
+          padding: 10px;
+          background-color: white;
+          border-radius: 5px;
+          margin-bottom: 10px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+        .sensor-item:hover {
+          background-color: #f1f1f1;
+        }
+        .sensor-item.active {
+          border-left: 4px solid #2c3e50;
+        }
+        .sensor-name {
+          font-weight: bold;
+        }
+        .sensor-reading {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 5px;
+          font-size: 14px;
+        }
+        .timestamp {
+          color: #6c757d;
+          font-size: 12px;
+          text-align: right;
+        }
+        .status-indicator {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          display: inline-block;
+          margin-right: 5px;
+        }
+        .status-good {
+          background-color: #28a745;
+        }
+        .status-warning {
+          background-color: #ffc107;
+        }
+        .status-critical {
+          background-color: #dc3545;
+        }
+        .leaflet-popup-content {
+          min-width: 200px;
+        }
+        .timeline-container {
+          height: 100px;
+          position: relative;
+          background-color: white;
+          border-top: 1px solid #ddd;
+          overflow: hidden;
+        }
+        .timeline {
+          height: 100%;
+          display: flex;
+          align-items: center;
+          padding: 0 20px;
+          overflow-x: auto;
+        }
+        .range-slider {
+          margin: 0 20px;
+          width: calc(100% - 40px);
+        }
+        footer {
+          padding: 10px;
+          background-color: #f8f9fa;
+          text-align: center;
+          border-top: 1px solid #ddd;
+          font-size: 12px;
+          color: #6c757d;
+        }
+        .loading-overlay {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(255,255,255,0.8);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 1000;
+          font-size: 18px;
+          font-weight: bold;
+        }
+        .heatmap-controls {
+          position: absolute;
+          top: 80px;
+          right: 10px;
+          z-index: 1000;
+          background: white;
+          padding: 10px;
+          border-radius: 5px;
+          box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+        }
+        .heatmap-legend {
+          margin-top: 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .legend-item {
+          display: flex;
+          align-items: center;
+          font-size: 12px;
+        }
+        .legend-color {
+          width: 20px;
+          height: 10px;
+          margin-right: 5px;
+          border-radius: 2px;
+        }
+        .legend-critical { background: linear-gradient(to right, #d73027, #fc8d59); }
+        .legend-warning { background: linear-gradient(to right, #fee08b, #ffffbf); }
+        .legend-good { background: linear-gradient(to right, #d9ef8b, #91cf60); }
+        
+        .health-gradient-selector {
+          margin-top: 10px;
+        }
+        .health-gradient-selector select {
+          width: 100%;
+          padding: 5px;
+        }
+        
+        .view-mode-toggle {
+          display: flex;
+          gap: 5px;
+          align-items: center;
+          margin-right: 10px;
+        }
+        .view-mode-toggle label {
+          margin-right: 5px;
+          font-size: 14px;
+          color: white;
+        }
+        
+        /* Toggle switch styling */
+        .switch {
+          position: relative;
+          display: inline-block;
+          width: 50px;
+          height: 24px;
+        }
+        .switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        .slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: #ccc;
+          transition: .4s;
+          border-radius: 24px;
+        }
+        .slider:before {
+          position: absolute;
+          content: "";
+          height: 16px;
+          width: 16px;
+          left: 4px;
+          bottom: 4px;
+          background-color: white;
+          transition: .4s;
+          border-radius: 50%;
+        }
+        input:checked + .slider {
+          background-color: #2196F3;
+        }
+        input:checked + .slider:before {
+          transform: translateX(26px);
+        }
+        
+        /* Health indicator styling */
+        .pulse-ring {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+          0% {
+            transform: scale(0.5);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1.5);
+            opacity: 0;
+          }
+        }
+        
+        /* Health status indicators */
+        .health-status {
+          padding: 3px 6px;
+          border-radius: 3px;
+          font-size: 12px;
+          font-weight: bold;
+          color: white;
+          display: inline-block;
+          margin-top: 5px;
+        }
+        .health-good {
+          background-color: #28a745;
+        }
+        .health-warning {
+          background-color: #ffc107;
+          color: #000;
+        }
+        .health-critical {
+          background-color: #dc3545;
+        }
+        
+        /* Sensor heatmap configurations */
+        .heatmap-config {
+          margin-top: 15px;
+          padding-top: 15px;
+          border-top: 1px solid #ddd;
+        }
+        .heatmap-config h4 {
+          margin-top: 0;
+          margin-bottom: 10px;
+        }
+        .heatmap-settings {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .heatmap-setting {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .heatmap-setting label {
+          font-size: 13px;
+        }
+        .heatmap-setting input {
+          width: 100%;
+        }
+        .slider-value {
+          font-size: 12px;
+          text-align: right;
+        }
+        
+        @media (max-width: 768px) {
+          .main-container {
+            flex-direction: column;
+          }
+          .sidebar {
+            width: 100%;
+            max-height: 200px;
+          }
+          .heatmap-controls {
+            width: calc(100% - 40px);
+            top: auto;
+            right: auto;
+            left: 10px;
+            bottom: 120px;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div id="app">
+        <header>
+          <div class="header-title">IoT Sensor Map</div>
+          <div class="header-controls">
+            <div class="view-mode-toggle">
+              <label>Health View</label>
+              <label class="switch">
+                <input type="checkbox" id="healthViewToggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <select id="viewType">
+              <option value="map">Map View</option>
+              <option value="heatmap">Heat Map</option>
+              <option value="health-heatmap">Health Heat Map</option>
+            </select>
+            <button id="refreshButton">Refresh Data</button>
+          </div>
+        </header>
+        
+        <div class="main-container">
+          <div id="map">
+            <!-- Health Heatmap Controls -->
+            <div class="heatmap-controls" id="heatmapControls" style="display: none;">
+              <h4>Health Heatmap Settings</h4>
+              
+              <div class="health-gradient-selector">
+                <label for="healthMetric">Health Metric:</label>
+                <select id="healthMetric">
+                  <option value="aqi">Air Quality Index</option>
+                  <option value="temperature">Temperature</option>
+                  <option value="humidity">Humidity</option>
+                  <option value="battery">Battery Level</option>
+                  <option value="signal">Signal Strength</option>
+                </select>
+              </div>
+              
+              <div class="heatmap-settings">
+                <div class="heatmap-setting">
+                  <label for="heatRadius">Heat Radius: <span id="heatRadiusValue">25</span></label>
+                  <input type="range" id="heatRadius" min="10" max="50" value="25">
+                </div>
+                
+                <div class="heatmap-setting">
+                  <label for="heatBlur">Heat Blur: <span id="heatBlurValue">15</span></label>
+                  <input type="range" id="heatBlur" min="5" max="30" value="15">
+                </div>
+                
+                <div class="heatmap-setting">
+                  <label for="heatIntensity">Heat Intensity: <span id="heatIntensityValue">0.7</span></label>
+                  <input type="range" id="heatIntensity" min="0.1" max="1.0" step="0.1" value="0.7">
+                </div>
+              </div>
+              
+              <div class="heatmap-legend">
+                <h4>Health Legend</h4>
+                <div class="legend-item">
+                  <div class="legend-color legend-critical"></div>
+                  <span>Critical (Unhealthy)</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color legend-warning"></div>
+                  <span>Warning (Moderate)</span>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color legend-good"></div>
+                  <span>Good (Healthy)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="sidebar">
+            <div class="sensor-type-filter">
+              <h3>Filter by Type</h3>
+              <div>
+                <input type="checkbox" id="airQuality" checked>
+                <label for="airQuality">Air Quality</label>
+              </div>
+              <div>
+                <input type="checkbox" id="tempHumidity" checked>
+                <label for="tempHumidity">Temperature & Humidity</label>
+              </div>
+            </div>
+            
+            <div class="sensor-value-filter">
+              <h3>Filter by Value</h3>
+              <div>
+                <input type="range" id="valueFilter" min="0" max="100" value="0">
+                <label for="valueFilter">Min value: <span id="valueFilterDisplay">0</span></label>
+              </div>
+            </div>
+            
+            <div class="sensor-list">
+              <h3>Sensors</h3>
+              <div id="sensorList">
+                <!-- Sensor items will be populated here -->
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="timeline-container">
+          <div class="timeline">
+            <span>Time Range:</span>
+            <input type="range" min="0" max="24" value="1" class="range-slider" id="timeRange">
+            <span id="timeRangeDisplay">Last hour</span>
+          </div>
+        </div>
+        
+        <footer>
+          ChirpStack IoT Sensor Map | Data updates every <span id="updateInterval">5</span> seconds
+        </footer>
+      </div>
+
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+      <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+      <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+      
+      <script>
+        // Configuration (normally loaded from environment or API)
+        const config = {
+          mapCenter: [0, 0],
+          mapZoom: 2,
+          mapProvider: 'openstreetmap',
+          updateInterval: 5000, // 5 seconds
+          apiEndpoints: {
+            allSensors: '/api/sensors/all',
+            airQualitySensors: '/api/sensors/air-quality',
+            temperatureHumiditySensors: '/api/sensors/temperature-humidity'
+          }
+        };
+
+        // Map initialization
+        let map = L.map('map').setView(config.mapCenter, config.mapZoom);
+        let markers = L.markerClusterGroup();
+        let heatLayer = null;
+        let allSensors = [];
+        let sensorMarkers = {};
+        
+        // Initialize tile layer based on provider
+        if (config.mapProvider === 'openstreetmap') {
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          }).addTo(map);
+        } else if (config.mapProvider === 'mapbox') {
+          // Would require API key
+          L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
+            attribution: '© MapBox',
+            id: 'mapbox/streets-v11',
+            accessToken: 'YOUR_MAPBOX_ACCESS_TOKEN'
+          }).addTo(map);
+        }
+        
+        // Add marker cluster layer to map
+        map.addLayer(markers);
+        
+        // Helper function to get sensor type icon
+        function getSensorIcon(type) {
+          return type === 'air-quality' ? 
+            L.divIcon({
+              html: '<div style="background-color: #3498db; width: 10px; height: 10px; border-radius: 50%; border: 2px solid white;"></div>',
+              className: 'sensor-icon',
+              iconSize: [15, 15]
+            }) : 
+            L.divIcon({
+              html: '<div style="background-color: #e74c3c; width: 10px; height: 10px; border-radius: 50%; border: 2px solid white;"></div>',
+              className: 'sensor-icon',
+              iconSize: [15, 15]
+            });
+        }
+        
+        // Helper function to get status class
+        function getStatusClass(value, type) {
+          if (type === 'air-quality') {
+            return value < 50 ? 'status-good' : value < 100 ? 'status-warning' : 'status-critical';
+          } else {
+            // For temperature
+            return value < 0 ? 'status-critical' : value > 30 ? 'status-warning' : 'status-good';
+          }
+        }
+        
+        // Helper function to format date
+        function formatDate(dateString) {
+          const date = new Date(dateString);
+          return date.toLocaleString();
+        }
+        
+        // Helper function to create popup content
+        function createPopupContent(sensor) {
+          let content = `<div class="popup-content">
+            <h3>${sensor.name}</h3>
+            <p><strong>Type:</strong> ${sensor.type === 'air-quality' ? 'Air Quality' : 'Temperature & Humidity'}</p>
+            <p><strong>Location:</strong> ${sensor.location.latitude.toFixed(6)}, ${sensor.location.longitude.toFixed(6)}</p>`;
+            
+          if (sensor.type === 'air-quality') {
+            content += `<p><strong>Air Quality Index:</strong> <span class="${getStatusClass(sensor.readings.aqi, 'air-quality')}">${sensor.readings.aqi}</span></p>
+                        <p><strong>PM2.5:</strong> ${sensor.readings.pm25} µg/m³</p>
+                        <p><strong>PM10:</strong> ${sensor.readings.pm10} µg/m³</p>`;
+          } else {
+            content += `<p><strong>Temperature:</strong> <span class="${getStatusClass(sensor.readings.temperature, 'temperature')}">${sensor.readings.temperature}°C</span></p>
+                        <p><strong>Humidity:</strong> ${sensor.readings.humidity}%</p>`;
+          }
+          
+          content += `<p class="timestamp">Last updated: ${formatDate(sensor.timestamp)}</p></div>`;
+          return content;
+        }
+        
+        // Create sensor list item
+        function createSensorListItem(sensor) {
+          const statusClass = sensor.type === 'air-quality' ? 
+                             getStatusClass(sensor.readings.aqi, 'air-quality') : 
+                             getStatusClass(sensor.readings.temperature, 'temperature');
+          
+          const sensorDiv = document.createElement('div');
+          sensorDiv.className = 'sensor-item';
+          sensorDiv.dataset.id = sensor.id;
+          
+          let readingHTML = '';
+          if (sensor.type === 'air-quality') {
+            readingHTML = `
+              <div class="sensor-reading">
+                <span>AQI</span>
+                <span>${sensor.readings.aqi}</span>
+              </div>
+              <div class="sensor-reading">
+                <span>PM2.5</span>
+                <span>${sensor.readings.pm25} µg/m³</span>
+              </div>`;
+          } else {
+            readingHTML = `
+              <div class="sensor-reading">
+                <span>Temperature</span>
+                <span>${sensor.readings.temperature}°C</span>
+              </div>
+              <div class="sensor-reading">
+                <span>Humidity</span>
+                <span>${sensor.readings.humidity}%</span>
+              </div>`;
+          }
+          
+          sensorDiv.innerHTML = `
+            <div class="sensor-name">
+              <span class="status-indicator ${statusClass}"></span>
+              ${sensor.name}
+            </div>
+            ${readingHTML}
+            <div class="timestamp">${formatDate(sensor.timestamp)}</div>
+          `;
+          
+          sensorDiv.addEventListener('click', () => {
+            // Highlight in list
+            document.querySelectorAll('.sensor-item').forEach(item => {
+              item.classList.remove('active');
+            });
+            sensorDiv.classList.add('active');
+            
+            // Center map on sensor and open popup
+            const marker = sensorMarkers[sensor.id];
+            if (marker) {
+              map.setView(marker.getLatLng(), 15);
+              marker.openPopup();
+            }
+          });
+          
+          return sensorDiv;
+        }
+        
+        // Fetch sensors data from API
+        async function fetchSensors() {
+          try {
+            const response = await fetch(config.apiEndpoints.allSensors);
+            const data = await response.json();
+            return data;
+          } catch (error) {
+            console.error('Error fetching sensor data:', error);
+            return [];
+          }
+        }
+        
+        // Update markers on map
+        function updateMap(sensors) {
+          // Clear existing markers
+          markers.clearLayers();
+          sensorMarkers = {};
+          
+          // Filter sensors based on UI controls
+          const showAirQuality = document.getElementById('airQuality').checked;
+          const showTempHumidity = document.getElementById('tempHumidity').checked;
+          const minValue = parseInt(document.getElementById('valueFilter').value);
+          const healthMetric = document.getElementById('healthMetric').value;
+          const isHealthView = document.getElementById('healthViewToggle').checked;
+          
+          const filteredSensors = sensors.filter(sensor => {
+            if (sensor.type === 'air-quality' && !showAirQuality) return false;
+            if (sensor.type === 'temperature-humidity' && !showTempHumidity) return false;
+            
+            // Filter by value
+            if (sensor.type === 'air-quality' && sensor.readings.aqi < minValue) return false;
+            if (sensor.type === 'temperature-humidity' && sensor.readings.temperature < minValue) return false;
+            
+            return true;
+          });
+          
+          // Add markers for each sensor
+          filteredSensors.forEach(sensor => {
+            const latLng = [sensor.location.latitude, sensor.location.longitude];
+            
+            // Use health-colored icons if health view is toggled on
+            const icon = isHealthView ? 
+                        createHealthIcon(sensor, healthMetric) : 
+                        getSensorIcon(sensor.type);
+            
+            // Enhance popup content with health status if health view is on
+            let popupContent = createPopupContent(sensor);
+            
+            if (isHealthView) {
+              const score = getSensorHealthScore(sensor, healthMetric);
+              const statusClass = score > 0.66 ? 'health-good' : score > 0.33 ? 'health-warning' : 'health-critical';
+              const statusText = score > 0.66 ? 'Good' : score > 0.33 ? 'Warning' : 'Critical';
+              
+              // Insert health status before the closing div
+              popupContent = popupContent.replace('</div>', 
+                `<div class="health-score">
+                  <p><strong>Health Status:</strong> <span class="health-status ${statusClass}">${statusText}</span></p>
+                  <p>Health Score: ${(score * 100).toFixed(0)}%</p>
+                </div></div>`
+              );
+            }
+            
+            const marker = L.marker(latLng, {
+              icon: icon
+            }).bindPopup(popupContent);
+            
+            markers.addLayer(marker);
+            sensorMarkers[sensor.id] = marker;
+          });
+          
+          // Update sidebar
+          updateSensorList(filteredSensors);
+          
+          // Update appropriate heatmap if active
+          const viewType = document.getElementById('viewType').value;
+          if (viewType === 'heatmap') {
+            updateHeatmap(filteredSensors);
+          } else if (viewType === 'health-heatmap') {
+            updateHealthHeatmap(filteredSensors);
+          }
+        }
+        
+        // Update sensor list in sidebar
+        function updateSensorList(sensors) {
+          const sensorListEl = document.getElementById('sensorList');
+          sensorListEl.innerHTML = '';
+          
+          if (sensors.length === 0) {
+            sensorListEl.innerHTML = '<p>No sensors match your criteria</p>';
+            return;
+          }
+          
+          sensors.forEach(sensor => {
+            sensorListEl.appendChild(createSensorListItem(sensor));
+          });
+        }
+        
+        // Function to get sensor health score (0-1 range)
+        function getSensorHealthScore(sensor, metric = 'default') {
+          let score = 0.5; // Default middle value
+          
+          if (sensor.type === 'air-quality') {
+            // For air quality, lower AQI is better health
+            if (metric === 'aqi' || metric === 'default') {
+              // Scale AQI from 0-500 to 1-0 (inverted, since lower AQI is better)
+              score = 1 - (Math.min(sensor.readings.aqi, 500) / 500);
+            } else if (metric === 'pm25') {
+              // Scale PM2.5 from 0-250 to 1-0 (inverted)
+              score = 1 - (Math.min(sensor.readings.pm25, 250) / 250);
+            }
+          } else if (sensor.type === 'temperature-humidity') {
+            if (metric === 'temperature' || metric === 'default') {
+              // For temperature, assume 20°C is optimal (score = 1)
+              // and scales down as it deviates from that value
+              const deviation = Math.abs(sensor.readings.temperature - 20);
+              score = Math.max(0, 1 - (deviation / 30));
+            } else if (metric === 'humidity') {
+              // For humidity, assume 50% is optimal (score = 1)
+              // and scales down as it deviates from that value
+              const deviation = Math.abs(sensor.readings.humidity - 50);
+              score = Math.max(0, 1 - (deviation / 50));
+            }
+          }
+          
+          // Battery and signal levels might be added later
+          if (metric === 'battery' && sensor.battery) {
+            score = sensor.battery / 100;
+          } else if (metric === 'signal' && sensor.signal) {
+            score = sensor.signal / 100;
+          }
+          
+          return score;
+        }
+        
+        // Get health indicator color based on health score
+        function getHealthColor(score) {
+          // Color gradient from red (0) to yellow (0.5) to green (1)
+          if (score < 0.33) {
+            return '#dc3545'; // Red - critical
+          } else if (score < 0.66) {
+            return '#ffc107'; // Yellow - warning
+          } else {
+            return '#28a745'; // Green - good
+          }
+        }
+        
+        // Create a health indicator icon
+        function createHealthIcon(sensor, metric) {
+          const score = getSensorHealthScore(sensor, metric);
+          const color = getHealthColor(score);
+          
+          // Create different icon types based on health view toggle
+          const isHealthView = document.getElementById('healthViewToggle').checked;
+          
+          if (isHealthView) {
+            // Pulsing health indicator
+            return L.divIcon({
+              html: `
+                <div style="position: relative;">
+                  <div class="pulse-ring" style="background-color: ${color}80;"></div>
+                  <div style="width: 12px; height: 12px; background-color: ${color}; border-radius: 50%; border: 2px solid white; position: relative; z-index: 10;"></div>
+                </div>
+              `,
+              className: 'health-icon',
+              iconSize: [20, 20],
+              iconAnchor: [10, 10]
+            });
+          } else {
+            // Standard icon with health color
+            return L.divIcon({
+              html: `<div style="background-color: ${color}; width: 10px; height: 10px; border-radius: 50%; border: 2px solid white;"></div>`,
+              className: 'sensor-icon',
+              iconSize: [15, 15]
+            });
+          }
+        }
+        
+        // Update regular heatmap layer
+        function updateHeatmap(sensors) {
+          if (heatLayer) {
+            map.removeLayer(heatLayer);
+          }
+          
+          // Get heatmap settings from controls
+          const radius = parseInt(document.getElementById('heatRadius').value) || 25;
+          const blur = parseInt(document.getElementById('heatBlur').value) || 15;
+          const intensity = parseFloat(document.getElementById('heatIntensity').value) || 0.7;
+          
+          const heatData = sensors.map(sensor => {
+            let value;
+            if (sensor.type === 'air-quality') {
+              value = sensor.readings.aqi / 500; // Normalize AQI
+            } else {
+              value = sensor.readings.temperature / 50; // Normalize temperature
+            }
+            return [sensor.location.latitude, sensor.location.longitude, Math.min(value, 1) * intensity];
+          });
+          
+          heatLayer = L.heatLayer(heatData, {
+            radius: radius,
+            blur: blur,
+            maxZoom: 10
+          }).addTo(map);
+        }
+        
+        // Update health heatmap layer
+        function updateHealthHeatmap(sensors) {
+          if (heatLayer) {
+            map.removeLayer(heatLayer);
+          }
+          
+          // Get selected health metric and heatmap settings
+          const healthMetric = document.getElementById('healthMetric').value;
+          const radius = parseInt(document.getElementById('heatRadius').value) || 25;
+          const blur = parseInt(document.getElementById('heatBlur').value) || 15;
+          const intensity = parseFloat(document.getElementById('heatIntensity').value) || 0.7;
+          
+          // Calculate gradient stops based on health scores
+          const heatData = sensors.map(sensor => {
+            const score = getSensorHealthScore(sensor, healthMetric);
+            return [sensor.location.latitude, sensor.location.longitude, score * intensity];
+          });
+          
+          // Custom gradient for health heatmap: red (critical) → yellow (warning) → green (good)
+          const healthGradient = {
+            0.0: '#d73027', // Bright red (critical)
+            0.33: '#fc8d59', // Orange (critical-warning transition)
+            0.5: '#fee08b', // Light yellow (warning)
+            0.66: '#d9ef8b', // Light green (warning-good transition)
+            1.0: '#91cf60'  // Green (good)
+          };
+          
+          heatLayer = L.heatLayer(heatData, {
+            radius: radius,
+            blur: blur,
+            maxZoom: 10,
+            gradient: healthGradient
+          }).addTo(map);
+        }
+        
+        // Toggle between map view types
+        document.getElementById('viewType').addEventListener('change', (e) => {
+          const viewType = e.target.value;
+          const heatmapControls = document.getElementById('heatmapControls');
+          
+          // Show/hide heatmap controls
+          if (viewType === 'health-heatmap') {
+            heatmapControls.style.display = 'block';
+          } else {
+            heatmapControls.style.display = 'none';
+          }
+          
+          // Update the view based on selected type
+          if (viewType === 'map') {
+            if (heatLayer) {
+              map.removeLayer(heatLayer);
+              heatLayer = null;
+            }
+            if (!map.hasLayer(markers)) {
+              map.addLayer(markers);
+            }
+          } else if (viewType === 'heatmap') {
+            updateHeatmap(allSensors);
+            if (map.hasLayer(markers)) {
+              map.removeLayer(markers);
+            }
+          } else if (viewType === 'health-heatmap') {
+            updateHealthHeatmap(allSensors);
+            if (map.hasLayer(markers)) {
+              map.removeLayer(markers);
+            }
+          }
+        });
+        
+        // Health view toggle changes marker icons
+        document.getElementById('healthViewToggle').addEventListener('change', () => {
+          if (document.getElementById('viewType').value === 'map') {
+            updateMap(allSensors);
+          }
+        });
+        
+        // Health metric selector changes heatmap
+        document.getElementById('healthMetric').addEventListener('change', () => {
+          if (document.getElementById('viewType').value === 'health-heatmap') {
+            updateHealthHeatmap(allSensors);
+          }
+        });
+        
+        // Heatmap settings controls
+        document.getElementById('heatRadius').addEventListener('input', (e) => {
+          document.getElementById('heatRadiusValue').textContent = e.target.value;
+          const viewType = document.getElementById('viewType').value;
+          if (viewType === 'heatmap') {
+            updateHeatmap(allSensors);
+          } else if (viewType === 'health-heatmap') {
+            updateHealthHeatmap(allSensors);
+          }
+        });
+        
+        document.getElementById('heatBlur').addEventListener('input', (e) => {
+          document.getElementById('heatBlurValue').textContent = e.target.value;
+          const viewType = document.getElementById('viewType').value;
+          if (viewType === 'heatmap') {
+            updateHeatmap(allSensors);
+          } else if (viewType === 'health-heatmap') {
+            updateHealthHeatmap(allSensors);
+          }
+        });
+        
+        document.getElementById('heatIntensity').addEventListener('input', (e) => {
+          document.getElementById('heatIntensityValue').textContent = e.target.value;
+          const viewType = document.getElementById('viewType').value;
+          if (viewType === 'heatmap') {
+            updateHeatmap(allSensors);
+          } else if (viewType === 'health-heatmap') {
+            updateHealthHeatmap(allSensors);
+          }
+        });
+        
+        // Filter change event handlers
+        document.getElementById('airQuality').addEventListener('change', () => updateMap(allSensors));
+        document.getElementById('tempHumidity').addEventListener('change', () => updateMap(allSensors));
+        document.getElementById('valueFilter').addEventListener('input', (e) => {
+          document.getElementById('valueFilterDisplay').textContent = e.target.value;
+          updateMap(allSensors);
+        });
+        
+        // Time range slider
+        document.getElementById('timeRange').addEventListener('input', (e) => {
+          const value = parseInt(e.target.value);
+          let displayText;
+          
+          if (value === 0) displayText = 'Real-time';
+          else if (value === 1) displayText = 'Last hour';
+          else if (value <= 24) displayText = `Last ${value} hours`;
+          else displayText = `Last ${Math.floor(value/24)} days`;
+          
+          document.getElementById('timeRangeDisplay').textContent = displayText;
+          // In a real implementation, this would trigger a new data fetch with the time range
+        });
+        
+        // Manual refresh button
+        document.getElementById('refreshButton').addEventListener('click', async () => {
+          const refreshButton = document.getElementById('refreshButton');
+          refreshButton.disabled = true;
+          refreshButton.textContent = 'Refreshing...';
+          
+          try {
+            allSensors = await fetchSensors();
+            updateMap(allSensors);
+          } finally {
+            refreshButton.disabled = false;
+            refreshButton.textContent = 'Refresh Data';
+          }
+        });
+        
+        // Initial data load and periodic updates
+        async function initialize() {
+          // Set update interval from config
+          document.getElementById('updateInterval').textContent = config.updateInterval / 1000;
+          
+          // Load initial data
+          allSensors = await fetchSensors();
+          updateMap(allSensors);
+          
+          // Set up auto-refresh
+          setInterval(async () => {
+            allSensors = await fetchSensors();
+            updateMap(allSensors);
+          }, config.updateInterval);
+        }
+        
+        // Start the application
+        initialize();
+      </script>
+    </body>
+    </html>

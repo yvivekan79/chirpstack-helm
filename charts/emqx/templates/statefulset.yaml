@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-emqx
+  labels:
+    app: {{ .Release.Name }}-emqx
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-emqx
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-emqx
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-emqx
+    spec:
+      terminationGracePeriodSeconds: 120
+      initContainers:
+      - name: emqx-init
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Wait for all potential previous nodes to be available first
+          ORDINAL=$(echo $POD_NAME | grep -o '[0-9]\+$')
+          if [ "$ORDINAL" -gt 0 ]; then
+            # Only join the cluster if we're not the first node (index 0)
+            LEADER_POD="{{ .Release.Name }}-emqx-0.{{ .Release.Name }}-emqx-headless.{{ .Release.Namespace }}.svc.cluster.local"
+            echo "This is a follower node. Will try to join $LEADER_POD"
+            
+            # Wait for the leader to be available
+            until $(nc -z $LEADER_POD 1883); do
+              echo "Waiting for leader node $LEADER_POD to be available..."
+              sleep 5
+            done
+            echo "Leader node is available, proceeding with startup"
+          else
+            echo "This is the leader node. No need to join cluster."
+          fi
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+      containers:
+        - name: emqx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: mqtt
+              containerPort: 1883
+              protocol: TCP
+            - name: mqtts
+              containerPort: 8883
+              protocol: TCP
+            - name: dashboard
+              containerPort: 18083
+              protocol: TCP
+          env:
+            # EMQX 4.4.x environment variables
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: EMQX_NAME
+              value: "emqx"
+            - name: EMQX_HOST
+              value: "$(POD_IP)"
+            - name: EMQX_NODE__NAME
+              value: "emqx@$(POD_IP)"
+            - name: EMQX_NODE__COOKIE
+              value: "emqxsecretcookie"
+            - name: EMQX_CLUSTER__DISCOVERY
+              value: "dns"
+            - name: EMQX_CLUSTER__DNS__NAME
+              value: "{{ .Release.Name }}-emqx-headless.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: EMQX_DASHBOARD__DEFAULT_USERNAME
+              value: "admin"
+            - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
+              value: "public"
+            - name: EMQX_ALLOW_ANONYMOUS
+              value: "true"
+            - name: EMQX_LOG__CONSOLE
+              value: "console"
+            - name: EMQX_LOG__CONSOLE__LEVEL
+              value: "info"
+            - name: EMQX_MQTT__MAX_TOPIC_LEVELS
+              value: "128"
+            - name: EMQX_BROKER__SHARED_SUBSCRIPTION_STRATEGY
+              value: "round_robin"
+          volumeMounts:
+            - name: data
+              mountPath: /opt/emqx/data
+            - name: emqx-config
+              mountPath: /opt/emqx/etc/emqx.conf
+              subPath: emqx.conf
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                - /bin/sh
+                - -c
+                - |
+                  # Also manually try to join the cluster after container starts
+                  # This is a backup in case DNS discovery doesn't work perfectly
+                  ORDINAL=$(echo $POD_NAME | grep -o '[0-9]\+$')
+                  if [ "$ORDINAL" -gt 0 ]; then
+                    LEADER_POD_IP=$(getent hosts {{ .Release.Name }}-emqx-0.{{ .Release.Name }}-emqx-headless.{{ .Release.Namespace }}.svc.cluster.local | awk '{ print $1 }')
+                    if [ ! -z "$LEADER_POD_IP" ]; then
+                      echo "Attempting to manually join cluster with leader at emqx@$LEADER_POD_IP"
+                      # Sleep to allow emqx to fully start before joining
+                      sleep 20
+                      /opt/emqx/bin/emqx_ctl cluster join emqx@$LEADER_POD_IP || true
+                    fi
+                  fi
+          livenessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: dashboard
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          startupProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: emqx-config
+          configMap:
+            name: {{ .Release.Name }}-emqx-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.storage.storageClass }}
+        storageClassName: {{ .Values.storage.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

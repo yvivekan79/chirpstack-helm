@@ -1,0 +1,6 @@
+apiVersion: v2
+name: chirpstack-gateway-bridge
+description: A Helm chart for ChirpStack Gateway Bridge
+type: application
+version: 0.1.0
+appVersion: "3.14.3"

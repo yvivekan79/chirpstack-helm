@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-sensor-map
+  labels:
+    app: {{ .Release.Name }}-sensor-map
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-sensor-map
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-sensor-map
+        {{- include "chirpstack.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Release.Name }}-sensor-map
+      {{- end }}
+      containers:
+      - name: sensor-map
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: sensor-map-config
+          mountPath: /usr/share/nginx/html
+        - name: sensor-map-api
+          mountPath: /api
+        env:
+        - name: DB_HOST
+          value: "{{ .Values.config.database.host }}"
+        - name: DB_PORT
+          value: "{{ .Values.config.database.port }}"
+        - name: DB_NAME
+          value: "{{ .Values.config.database.database }}"
+        - name: DB_USER
+          value: "{{ .Values.config.database.user }}"
+        {{- if .Values.config.database.existingSecret }}
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.config.database.existingSecret }}
+              key: {{ .Values.config.database.existingSecretKey }}
+        {{- else }}
+        - name: DB_PASSWORD
+          value: "postgres"
+        {{- end }}
+        - name: KAFKA_BROKERS
+          value: {{ .Values.config.kafka.brokers | join "," | quote }}
+        - name: KAFKA_TOPICS
+          value: {{ .Values.config.kafka.topics | join "," | quote }}
+        - name: KAFKA_CONSUMER_GROUP
+          value: "{{ .Values.config.kafka.consumerGroup }}"
+        - name: MAP_DEFAULT_LAT
+          value: "{{ .Values.config.ui.defaultCenter.lat }}"
+        - name: MAP_DEFAULT_LNG
+          value: "{{ .Values.config.ui.defaultCenter.lng }}"
+        - name: MAP_DEFAULT_ZOOM
+          value: "{{ .Values.config.ui.defaultZoom }}"
+        - name: MAP_PROVIDER
+          value: "{{ .Values.config.ui.mapProvider }}"
+        - name: UPDATE_INTERVAL
+          value: "{{ .Values.config.ui.updateInterval }}"
+        - name: FEATURE_CLUSTERING
+          value: "{{ .Values.config.features.clustering }}"
+        - name: FEATURE_HEATMAP
+          value: "{{ .Values.config.features.heatmap }}"
+        - name: FEATURE_TIMELINE
+          value: "{{ .Values.config.features.timeline }}"
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+      # API server sidecar container
+      - name: sensor-map-api
+        image: "node:18-alpine"
+        command: ["node", "/api/server.js"]
+        ports:
+        - containerPort: 3000
+          name: api
+        volumeMounts:
+        - name: sensor-map-api
+          mountPath: /api
+        env:
+        - name: DB_HOST
+          value: "{{ .Values.config.database.host }}"
+        - name: DB_PORT
+          value: "{{ .Values.config.database.port }}"
+        - name: DB_NAME
+          value: "{{ .Values.config.database.database }}"
+        - name: DB_USER
+          value: "{{ .Values.config.database.user }}"
+        {{- if .Values.config.database.existingSecret }}
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.config.database.existingSecret }}
+              key: {{ .Values.config.database.existingSecretKey }}
+        {{- else }}
+        - name: DB_PASSWORD
+          value: "postgres"
+        {{- end }}
+        - name: KAFKA_BROKERS
+          value: {{ .Values.config.kafka.brokers | join "," | quote }}
+        - name: KAFKA_TOPICS
+          value: {{ .Values.config.kafka.topics | join "," | quote }}
+        - name: KAFKA_CONSUMER_GROUP
+          value: "{{ .Values.config.kafka.consumerGroup }}"
+        - name: PORT
+          value: "3000"
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: sensor-map-config
+        configMap:
+          name: {{ .Release.Name }}-sensor-map-ui
+      - name: sensor-map-api
+        configMap:
+          name: {{ .Release.Name }}-sensor-map-api
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

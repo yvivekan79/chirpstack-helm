@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "chirpstack.fullname" . }}-lwnsimulator
+  labels:
+    {{- include "chirpstack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lwnsimulator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chirpstack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: lwnsimulator
+  template:
+    metadata:
+      labels:
+        {{- include "chirpstack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: lwnsimulator
+    spec:
+      containers:
+        - name: lwnsimulator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GATEWAY_EUI
+              value: "{{ .Values.gateway.eui }}"
+            - name: GATEWAY_BRIDGE_ADDRESS
+              value: "{{ .Values.chirpstack.gatewayBridge.host }}:{{ .Values.chirpstack.gatewayBridge.port }}"
+            - name: SIMULATOR_NODES
+              value: "{{ .Values.simulatedNodes }}"
+            - name: APP_SERVER_ADDRESS
+              value: "{{ .Values.chirpstack.applicationServer.host }}:{{ .Values.chirpstack.applicationServer.port }}"
+            {{- if .Values.chirpstack.applicationServer.apiKey }}
+            - name: APP_SERVER_API_KEY
+              value: "{{ .Values.chirpstack.applicationServer.apiKey }}"
+            {{- end }}
+            - name: UPLINK_INTERVAL
+              value: "{{ .Values.simulation.uplinkInterval }}"
+            - name: JOIN_TYPE
+              value: "{{ .Values.simulation.joinType }}"
+            - name: DEVICE_CLASS
+              value: "{{ .Values.simulation.deviceClass }}"
+            - name: DATA_RATE
+              value: "{{ .Values.simulation.dataRate }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

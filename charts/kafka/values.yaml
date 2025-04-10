@@ -1,0 +1,49 @@
+# Kafka settings for ChirpStack integration
+enabled: true
+replicas: 3
+image:
+  repository: bitnami/kafka
+  tag: 3.7-debian-12
+  pullPolicy: IfNotPresent
+
+config:
+  # KRaft mode configuration
+  kraftMode: true
+  kraftClusterId: "abcdefghijklmnopqrstuv"
+  processRoles: "controller,broker"
+  listeners: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
+  listenerSecurityProtocolMap: "CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+  controllerListenerNames: "CONTROLLER"
+  advertiseListeners: "PLAINTEXT://{{ .Release.Name }}-kafka-${KAFKA_CFG_NODE_ID}.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"
+  
+  # Topic settings
+  offsetsTopicReplicationFactor: 1
+  transactionStateLogReplicationFactor: 1
+  transactionStateLogMinIsr: 1
+  
+  # External access settings (for NodePort or LoadBalancer)
+  external:
+    enabled: true
+    service:
+      type: NodePort
+      port: 9094
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""  # Use default storage class
+
+# Extra configuration for init container
+init:
+  image:
+    repository: busybox
+    tag: 1.36
+    pullPolicy: IfNotPresent

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: geo-enrichment-service
+description: Geospatial enrichment service for IoT sensor data
+type: application
+version: 0.1.0
+appVersion: 1.0.0

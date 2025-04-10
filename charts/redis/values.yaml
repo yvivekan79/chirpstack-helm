@@ -1,0 +1,21 @@
+# Default values for Redis
+image:
+  repository: redis
+  tag: 7.0-alpine
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "500m"
+
+storage:
+  size: 1Gi
+  class: local-path
+
+service:
+  type: ClusterIP
+  port: 6379

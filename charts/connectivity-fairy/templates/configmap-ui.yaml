@@ -1,0 +1,640 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-connectivity-fairy-ui
+  labels:
+    app: {{ .Release.Name }}-connectivity-fairy
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Kubernetes Connectivity Fairy</title>
+      <style>
+        :root {
+          --primary-color: #a490ff;
+          --secondary-color: #ffb7e3;
+          --background-color: #f7f5ff;
+          --text-color: #333;
+          --success-color: #8bc34a;
+          --warning-color: #ffc107;
+          --danger-color: #ff5252;
+        }
+        
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          margin: 0;
+          padding: 0;
+          background-color: var(--background-color);
+          color: var(--text-color);
+        }
+        
+        .container {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 20px;
+        }
+        
+        .header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 30px;
+          padding-bottom: 20px;
+          border-bottom: 1px solid #ddd;
+        }
+        
+        .fairy-mascot {
+          width: 150px;
+          margin-right: 20px;
+        }
+        
+        .fairy-container {
+          position: relative;
+          width: 150px;
+          height: 150px;
+        }
+        
+        .fairy {
+          position: absolute;
+          width: 100px;
+          height: 100px;
+          top: 20px;
+          left: 20px;
+        }
+        
+        .fairy-head {
+          position: absolute;
+          width: 60px;
+          height: 60px;
+          background-color: #ffdbf1;
+          border-radius: 50%;
+          top: 0;
+          left: 20px;
+          z-index: 2;
+          overflow: hidden;
+        }
+        
+        .fairy-body {
+          position: absolute;
+          width: 40px;
+          height: 60px;
+          background-color: var(--secondary-color);
+          border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+          top: 40px;
+          left: 30px;
+          z-index: 1;
+        }
+        
+        .fairy-wing {
+          position: absolute;
+          width: 40px;
+          height: 60px;
+          background-color: rgba(255, 255, 255, 0.8);
+          border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+          z-index: 0;
+        }
+        
+        .fairy-wing.left {
+          transform: rotate(-30deg);
+          left: 10px;
+          top: 30px;
+        }
+        
+        .fairy-wing.right {
+          transform: rotate(30deg);
+          left: 50px;
+          top: 30px;
+        }
+        
+        .fairy-eye {
+          position: absolute;
+          width: 10px;
+          height: 12px;
+          background-color: white;
+          border-radius: 50%;
+          top: 20px;
+          z-index: 3;
+        }
+        
+        .fairy-eye.left {
+          left: 15px;
+        }
+        
+        .fairy-eye.right {
+          left: 35px;
+        }
+        
+        .fairy-eye::after {
+          content: "";
+          position: absolute;
+          width: 5px;
+          height: 5px;
+          background-color: #333;
+          border-radius: 50%;
+          top: 2px;
+          left: 2px;
+        }
+        
+        .fairy-mouth {
+          position: absolute;
+          width: 20px;
+          height: 10px;
+          border-radius: 0 0 10px 10px;
+          border-bottom: 2px solid #333;
+          top: 35px;
+          left: 20px;
+          z-index: 3;
+        }
+        
+        .fairy-wand {
+          position: absolute;
+          width: 40px;
+          height: 5px;
+          background-color: #ffd700;
+          top: 60px;
+          left: 60px;
+          z-index: 3;
+          transform: rotate(-45deg);
+        }
+        
+        .fairy-wand::after {
+          content: "✨";
+          position: absolute;
+          top: -8px;
+          right: -5px;
+          font-size: 16px;
+        }
+        
+        .fairy-magic {
+          position: absolute;
+          width: 100%;
+          height: 100%;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(255,210,255,0.4) 0%, rgba(255,255,255,0) 70%);
+          animation: pulse 2s infinite;
+          z-index: 0;
+        }
+        
+        @keyframes pulse {
+          0% {
+            transform: scale(0.8);
+            opacity: 0.7;
+          }
+          50% {
+            transform: scale(1.1);
+            opacity: 0.9;
+          }
+          100% {
+            transform: scale(0.8);
+            opacity: 0.7;
+          }
+        }
+        
+        @keyframes float {
+          0% {
+            transform: translateY(0px);
+          }
+          50% {
+            transform: translateY(-10px);
+          }
+          100% {
+            transform: translateY(0px);
+          }
+        }
+        
+        .fairy-container {
+          animation: float 3s ease-in-out infinite;
+        }
+        
+        .header-text {
+          flex: 1;
+        }
+        
+        h1 {
+          margin: 0;
+          color: var(--primary-color);
+          font-size: 2.5rem;
+        }
+        
+        .subtitle {
+          color: #666;
+          font-size: 1.2rem;
+          margin-top: 5px;
+        }
+        
+        .status-card {
+          background-color: white;
+          border-radius: 10px;
+          padding: 20px;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          margin-bottom: 20px;
+        }
+        
+        .status-header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 15px;
+        }
+        
+        .status-icon {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          margin-right: 10px;
+        }
+        
+        .status-icon.healthy {
+          background-color: var(--success-color);
+        }
+        
+        .status-icon.degraded {
+          background-color: var(--warning-color);
+        }
+        
+        .status-icon.critical {
+          background-color: var(--danger-color);
+        }
+        
+        .status-title {
+          margin: 0;
+          font-size: 1.5rem;
+        }
+        
+        .grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: 20px;
+        }
+        
+        .component-card {
+          background-color: white;
+          border-radius: 10px;
+          padding: 15px;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        .component-header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        
+        .component-status {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          margin-right: 10px;
+        }
+        
+        .component-status.connected {
+          background-color: var(--success-color);
+        }
+        
+        .component-status.partial {
+          background-color: var(--warning-color);
+        }
+        
+        .component-status.disconnected {
+          background-color: var(--danger-color);
+        }
+        
+        .component-name {
+          margin: 0;
+          font-size: 1.2rem;
+          font-weight: 500;
+        }
+        
+        .connection-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+        
+        .connection-item {
+          display: flex;
+          align-items: center;
+          padding: 5px 0;
+          font-size: 0.9rem;
+        }
+        
+        .connection-status {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          margin-right: 8px;
+        }
+        
+        .connection-status.connected {
+          background-color: var(--success-color);
+        }
+        
+        .connection-status.disconnected {
+          background-color: var(--danger-color);
+        }
+        
+        .connection-target {
+          flex: 1;
+        }
+        
+        .last-update {
+          text-align: center;
+          color: #666;
+          font-size: 0.9rem;
+          margin-top: 20px;
+        }
+        
+        .tooltip {
+          position: relative;
+          display: inline-block;
+          cursor: help;
+        }
+        
+        .tooltip .tooltiptext {
+          visibility: hidden;
+          width: 200px;
+          background-color: #555;
+          color: #fff;
+          text-align: center;
+          border-radius: 6px;
+          padding: 5px;
+          position: absolute;
+          z-index: 1;
+          bottom: 125%;
+          left: 50%;
+          margin-left: -100px;
+          opacity: 0;
+          transition: opacity 0.3s;
+        }
+        
+        .tooltip:hover .tooltiptext {
+          visibility: visible;
+          opacity: 1;
+        }
+        
+        .fairy-quote {
+          background-color: white;
+          border-radius: 15px;
+          padding: 15px;
+          margin: 20px 0;
+          position: relative;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .fairy-quote::before {
+          content: "";
+          position: absolute;
+          width: 0;
+          height: 0;
+          border-left: 10px solid transparent;
+          border-right: 10px solid transparent;
+          border-top: 10px solid white;
+          bottom: -10px;
+          left: 30px;
+        }
+        
+        .fairy-quote p {
+          margin: 0;
+          font-size: 1.1rem;
+          font-style: italic;
+          color: var(--primary-color);
+        }
+        
+        @media (max-width: 768px) {
+          .header {
+            flex-direction: column;
+            text-align: center;
+          }
+          
+          .fairy-mascot {
+            margin-right: 0;
+            margin-bottom: 20px;
+          }
+          
+          .grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="fairy-mascot">
+            <div class="fairy-container">
+              <div class="fairy-magic"></div>
+              <div class="fairy">
+                <div class="fairy-wing left"></div>
+                <div class="fairy-wing right"></div>
+                <div class="fairy-body"></div>
+                <div class="fairy-head">
+                  <div class="fairy-eye left"></div>
+                  <div class="fairy-eye right"></div>
+                  <div class="fairy-mouth"></div>
+                </div>
+                <div class="fairy-wand"></div>
+              </div>
+            </div>
+          </div>
+          <div class="header-text">
+            <h1>Kubernetes Connectivity Fairy</h1>
+            <p class="subtitle">Keeping an eye on your ChirpStack IoT infrastructure</p>
+          </div>
+        </div>
+        
+        <div class="fairy-quote">
+          <p id="fairy-quote">Loading the magical connectivity status... ✨</p>
+        </div>
+        
+        <div class="status-card">
+          <div class="status-header">
+            <div id="overall-status-icon" class="status-icon healthy"></div>
+            <h2 class="status-title">Overall Connectivity Status</h2>
+          </div>
+          <p id="overall-status-text">Checking connectivity status...</p>
+        </div>
+        
+        <div id="components-grid" class="grid">
+          <!-- Components will be added here dynamically -->
+        </div>
+        
+        <p class="last-update">Last updated: <span id="last-update-time">Loading...</span></p>
+      </div>
+      
+      <script>
+        // Define fairy quotes for different statuses
+        const fairyQuotes = {
+          healthy: [
+            "All the components are happily talking to each other! ✨",
+            "Your IoT network is flowing with magical connectivity! ✨",
+            "Everything looks perfect! Your ChirpStack is in harmony! ✨",
+            "All connections are sparkling with IoT magic! ✨"
+          ],
+          degraded: [
+            "Oh dear! Some components seem to be having a little chat trouble! Let me sprinkle some connectivity dust... ✨",
+            "I've detected a few connection hiccups. Let's see what we can fix! ✨",
+            "Not to worry! Some connections need a little magic touch, but we'll get them talking again! ✨"
+          ],
+          checking: [
+            "Casting my connectivity spell... One moment please! ✨",
+            "Waving my wand to check all the magical IoT connections... ✨",
+            "Flying between all your Kubernetes pods to check their connections... ✨"
+          ]
+        };
+        
+        // Randomly select a quote from the appropriate array
+        function getRandomQuote(status) {
+          const quotes = fairyQuotes[status] || fairyQuotes.checking;
+          return quotes[Math.floor(Math.random() * quotes.length)];
+        }
+        
+        // Function to fetch the connectivity data
+        async function fetchConnectivity() {
+          try {
+            const response = await fetch('/data/connectivity.json');
+            if (!response.ok) {
+              throw new Error('Failed to fetch connectivity data');
+            }
+            return await response.json();
+          } catch (error) {
+            console.error('Error fetching connectivity data:', error);
+            return {
+              timestamp: new Date().toISOString(),
+              connectivity: {
+                overall_status: 'checking',
+                components: {}
+              }
+            };
+          }
+        }
+        
+        // Function to update the UI with connectivity data
+        function updateUI(data) {
+          // Update timestamp
+          const timestamp = new Date(data.timestamp);
+          document.getElementById('last-update-time').textContent = timestamp.toLocaleString();
+          
+          // Update overall status
+          const overallStatus = data.connectivity.overall_status;
+          const overallStatusIcon = document.getElementById('overall-status-icon');
+          const overallStatusText = document.getElementById('overall-status-text');
+          
+          overallStatusIcon.className = 'status-icon ' + overallStatus;
+          
+          let statusMessage = '';
+          switch (overallStatus) {
+            case 'healthy':
+              statusMessage = 'All components are connected and communicating successfully! 🌟';
+              break;
+            case 'degraded':
+              statusMessage = 'Some components are experiencing connectivity issues. Check the details below. ⚠️';
+              break;
+            case 'critical':
+              statusMessage = 'Critical connectivity issues detected! Many components cannot communicate. 🚨';
+              break;
+            default:
+              statusMessage = 'Checking connectivity status...';
+          }
+          
+          overallStatusText.textContent = statusMessage;
+          
+          // Update fairy quote
+          document.getElementById('fairy-quote').textContent = getRandomQuote(overallStatus);
+          
+          // Clear and rebuild components grid
+          const componentsGrid = document.getElementById('components-grid');
+          componentsGrid.innerHTML = '';
+          
+          // Add component cards
+          const components = data.connectivity.components;
+          Object.keys(components).forEach(componentName => {
+            const component = components[componentName];
+            
+            // Create component card
+            const componentCard = document.createElement('div');
+            componentCard.className = 'component-card';
+            
+            // Create component header
+            const componentHeader = document.createElement('div');
+            componentHeader.className = 'component-header';
+            
+            const componentStatus = document.createElement('div');
+            componentStatus.className = `component-status ${component.status}`;
+            componentHeader.appendChild(componentStatus);
+            
+            const componentNameElem = document.createElement('h3');
+            componentNameElem.className = 'component-name';
+            componentNameElem.textContent = componentName;
+            componentHeader.appendChild(componentNameElem);
+            
+            componentCard.appendChild(componentHeader);
+            
+            // Create connections list
+            const connectionsList = document.createElement('ul');
+            connectionsList.className = 'connection-list';
+            
+            // Add connections
+            if (component.connections) {
+              Object.keys(component.connections).forEach(targetName => {
+                const connection = component.connections[targetName];
+                
+                const connectionItem = document.createElement('li');
+                connectionItem.className = 'connection-item';
+                
+                const connectionStatus = document.createElement('div');
+                connectionStatus.className = `connection-status ${connection.status}`;
+                connectionItem.appendChild(connectionStatus);
+                
+                const connectionTarget = document.createElement('div');
+                connectionTarget.className = 'connection-target';
+                connectionTarget.textContent = targetName;
+                connectionItem.appendChild(connectionTarget);
+                
+                connectionsList.appendChild(connectionItem);
+              });
+            }
+            
+            componentCard.appendChild(connectionsList);
+            componentsGrid.appendChild(componentCard);
+          });
+        }
+        
+        // Initial fake data to show while loading
+        const initialData = {
+          timestamp: new Date().toISOString(),
+          connectivity: {
+            overall_status: 'checking',
+            components: {
+              'chirpstack-application-server': {
+                status: 'checking',
+                connections: {
+                  'chirpstack-network-server': { status: 'checking' },
+                  'postgresql': { status: 'checking' },
+                  'redis': { status: 'checking' }
+                }
+              },
+              'chirpstack-network-server': {
+                status: 'checking',
+                connections: {
+                  'chirpstack-gateway-bridge': { status: 'checking' },
+                  'postgresql': { status: 'checking' },
+                  'redis': { status: 'checking' }
+                }
+              }
+            }
+          }
+        };
+        
+        // Initial UI update
+        updateUI(initialData);
+        
+        // Periodically update the UI
+        setInterval(async () => {
+          const data = await fetchConnectivity();
+          updateUI(data);
+        }, 5000);
+      </script>
+    </body>
+    </html>

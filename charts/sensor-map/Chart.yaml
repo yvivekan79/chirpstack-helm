@@ -1,0 +1,9 @@
+apiVersion: v2
+name: sensor-map
+description: A Helm chart for real-time geospatial sensor mapping for ChirpStack IoT
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: IoT Admin
+    email: admin@example.com

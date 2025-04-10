@@ -1,0 +1,133 @@
+# Telegraf Helm chart values
+
+# Legacy single telegraf configuration (for backwards compatibility)
+replicaCount: 1
+
+# New configuration with source and sink separation
+# Source Telegraf configuration - EMQX to Kafka
+source:
+  enabled: true
+  replicaCount: 3  # 3 nodes as shown in the architecture diagram
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  config:
+    mqtt:
+      enabled: true
+      servers: ["tcp://{{ .Release.Name }}-emqx:1883"]
+      topics: ["application/+/device/+/event/+", "gateway/+/event/+"]
+      username: ""
+      password: ""
+      client_id: "telegraf-source-mqtt"
+      data_format: "json"
+    kafka:
+      enabled: true
+      brokers: ["{{ .Release.Name }}-kafka:9092"]
+      topic_mapping:
+        air_quality: "realtime-gr-dss-airqualitysensor"
+        temperature_humidity: "realtime-gr-dss-temperaturehumiditysensor"
+
+# Sink Telegraf configuration - Kafka to TimescaleDB
+sink:
+  enabled: true
+  replicaCount: 3  # 3 nodes as shown in the architecture diagram
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  config:
+    kafka:
+      enabled: true
+      brokers: ["{{ .Release.Name }}-kafka:9092"]
+      topics: ["realtime-gr-dss-airqualitysensor", "realtime-gr-dss-temperaturehumiditysensor"]
+      consumer_group: "telegraf_timescale_consumers"
+      client_id: "telegraf-sink-kafka"
+    timescaledb:
+      enabled: true
+      connection: "postgres://postgres:postgres@{{ .Release.Name }}-timescaledb:5432/iot_timeseries"
+      tables:
+        airqualitysensor: "airqualitysensor"
+        temperaturehumiditysensor: "temperaturehumiditysensor"
+
+# Common configuration
+image:
+  repository: telegraf
+  tag: "1.28.0-alpine"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Legacy configuration structure - retained for backward compatibility
+config:
+  global:
+    interval: "10s"
+    round_interval: true
+    metric_batch_size: 1000
+    metric_buffer_limit: 10000
+    collection_jitter: "0s"
+    flush_jitter: "0s"
+    precision: ""
+    debug: false
+    quiet: false
+    logfile: ""
+    
+  # MQTT Input to receive data from EMQX
+  mqttInput:
+    enabled: true
+    servers: ["tcp://{{ .Release.Name }}-emqx:1883"]
+    topics: ["application/+/device/+/event/+"]
+    username: ""
+    password: ""
+    data_format: "json"
+    
+  # Kafka Output to send processed data to Kafka
+  kafkaOutput:
+    enabled: true
+    brokers: ["{{ .Release.Name }}-kafka:9092"]
+    topic: "iot.device.data"
+    
+  # Kafka Input to receive data from Kafka
+  kafkaInput:
+    enabled: true
+    brokers: ["{{ .Release.Name }}-kafka:9092"]
+    topics: ["realtime-gr-dss-airqualitysensor", "realtime-gr-dss-temperaturehumiditysensor"]
+    consumer_group: "telegraf_consumers"
+    
+  # TimescaleDB Output to store data in TimescaleDB
+  timescaledbOutput:
+    enabled: true
+    connection: "postgres://postgres:postgres@{{ .Release.Name }}-timescaledb:5432/iot_timeseries"
+    database: "iot_timeseries"
+    username: "postgres"
+    password: "postgres"
+    table: "device_data"
+    hypertable: true
+    hypertable_partition_by: "time"
+    hypertable_chunk_time_interval: "1h"
+
+# Resource defaults (used if not specified in source or sink)
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

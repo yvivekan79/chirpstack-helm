@@ -1,0 +1,17 @@
+{{- if .Values.config.external.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-kafka-external
+  labels:
+    app: {{ .Release.Name }}-kafka
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.config.external.service.type }}
+  ports:
+    - port: {{ .Values.config.external.service.port }}
+      targetPort: external
+      name: external
+  selector:
+    app: {{ .Release.Name }}-kafka
+{{- end }}

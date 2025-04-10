@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-chirpstack-network-server
+  labels:
+    app: {{ .Release.Name }}-chirpstack-network-server
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-chirpstack-network-server
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-chirpstack-network-server
+    spec:
+      {{- if .Values.global.chirpstack.initContainers.enabled }}
+      initContainers:
+        - name: wait-for-postgresql
+          image: busybox:1.34
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-postgresql 5432; do echo "Waiting for PostgreSQL"; sleep 2; done;']
+        - name: wait-for-redis
+          image: busybox:1.34
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-redis 6379; do echo "Waiting for Redis"; sleep 2; done;']
+        - name: wait-for-emqx
+          image: busybox:1.34
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-emqx 1883; do echo "Waiting for EMQX"; sleep 2; done;']
+      {{- end }}
+      containers:
+        - name: chirpstack-network-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chirpstack-db-credentials
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/chirpstack-network-server/chirpstack-network-server.toml
+              subPath: chirpstack-network-server.toml
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-chirpstack-network-server-config

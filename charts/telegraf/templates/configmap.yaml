@@ -1,0 +1,150 @@
+# Source Telegraf ConfigMap (EMQX → Kafka)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-telegraf-source-config
+  labels:
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/name: {{ .Release.Name }}-telegraf-source
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    component: "source"
+data:
+  telegraf.conf: |-
+    # Telegraf Source Configuration - EMQX to Kafka
+    # First part of data flow: EMQX → Telegraf (source) → Kafka
+    [global_tags]
+      deployment = "{{ .Release.Name }}"
+      component = "source"
+      role = "ingest"
+      source = "mqtt"
+      stage = "ingest"
+      
+    [agent]
+      interval = "10s"
+      round_interval = true
+      metric_batch_size = 1000
+      metric_buffer_limit = 10000
+      collection_jitter = "0s"
+      flush_jitter = "0s"
+      precision = ""
+      debug = false
+      quiet = false
+      hostname = "telegraf-source"
+      omit_hostname = false
+    
+    # MQTT Input - Data source from EMQX
+    [[inputs.mqtt_consumer]]
+      # Multiple server configurations for better reliability
+      servers = [
+        "tcp://{{ .Release.Name }}-emqx:1883"
+      ]
+      topics = [
+        "application/+/device/+/event/+",
+        "gateway/+/event/+"
+      ]
+      client_id = "telegraf-source-mqtt"
+      data_format = "json"
+      # Connection settings
+      connection_timeout = "30s"
+      max_undelivered_messages = 1000
+      persistent_session = true
+      qos = 1
+    
+    # Output to Kafka
+    [[outputs.kafka]]
+      brokers = ["{{ .Release.Name }}-kafka-0.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092", 
+                "{{ .Release.Name }}-kafka-1.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092", 
+                "{{ .Release.Name }}-kafka-2.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"]
+      topic = "realtime-gr-dss-airqualitysensor"
+      data_format = "json"
+      max_retry = 3
+      required_acks = -1
+    
+    # File output for debugging
+    [[outputs.file]]
+      files = ["/tmp/telegraf-source-debug.out"]
+      data_format = "json"
+---
+# Sink Telegraf ConfigMap (Kafka → TimescaleDB)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-telegraf-sink-config
+  labels:
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/name: {{ .Release.Name }}-telegraf-sink
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    component: "sink"
+data:
+  telegraf.conf: |-
+    # Telegraf Sink Configuration - Kafka to TimescaleDB
+    # Second part of data flow: Kafka → Telegraf (sink) → TimescaleDB
+    [global_tags]
+      deployment = "{{ .Release.Name }}"
+      component = "sink" 
+      role = "storage"
+      stage = "storage"
+      destination = "timescaledb"
+      
+    [agent]
+      interval = "10s"
+      round_interval = true
+      metric_batch_size = 1000
+      metric_buffer_limit = 10000
+      collection_jitter = "0s"
+      flush_jitter = "0s"
+      precision = ""
+      debug = false
+      quiet = false
+      hostname = "telegraf-sink"
+      omit_hostname = false
+    
+    # Kafka Input - consume from the topics where source Telegraf published
+    [[inputs.kafka_consumer]]
+      brokers = ["{{ .Release.Name }}-kafka-0.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092", 
+                "{{ .Release.Name }}-kafka-1.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092", 
+                "{{ .Release.Name }}-kafka-2.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"]
+      topics = [
+        "realtime-gr-dss-airqualitysensor", 
+        "realtime-gr-dss-temperaturehumiditysensor"
+      ]
+      consumer_group = "telegraf_timescale_consumers"
+      client_id = "telegraf-sink-kafka"
+      data_format = "json"
+      max_message_len = 1000000
+    
+    # TimescaleDB Output - Store the processed data
+    [[outputs.postgresql]]
+      connection = "host={{ .Release.Name }}-timescaledb port=5432 user=postgres password=postgres dbname=iot_timeseries sslmode=disable connect_timeout=60"
+      # Create the table if it doesn't exist
+      create_templates = [
+        '''CREATE TABLE IF NOT EXISTS "sensor_data" (
+          "time" TIMESTAMPTZ NOT NULL,
+          "deployment" TEXT,
+          "component" TEXT,
+          "role" TEXT,
+          "stage" TEXT,
+          "destination" TEXT,
+          "topic" TEXT,
+          "device_id" TEXT,
+          "sensor_type" TEXT,
+          "temperature" FLOAT,
+          "humidity" FLOAT,
+          "co2" FLOAT,
+          "voc" FLOAT,
+          "pm10" FLOAT,
+          "pm25" FLOAT,
+          "noise" FLOAT,
+          "latitude" FLOAT,
+          "longitude" FLOAT
+        )''',
+        'CREATE INDEX IF NOT EXISTS "idx_sensor_data_time" ON "sensor_data" ("time" DESC)',
+        'CREATE INDEX IF NOT EXISTS "idx_sensor_data_device" ON "sensor_data" ("device_id")'
+      ]
+        
+    # File output for debugging
+    [[outputs.file]]
+      files = ["/tmp/telegraf-sink-debug.out"]
+      data_format = "json"

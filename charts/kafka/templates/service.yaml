@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-kafka
+  labels:
+    app: {{ .Release.Name }}-kafka
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - port: 9092
+      targetPort: plaintext
+      name: plaintext
+    - port: 9093
+      targetPort: controller
+      name: controller
+    - port: 9094
+      targetPort: external
+      name: external
+  selector:
+    app: {{ .Release.Name }}-kafka

@@ -1,0 +1,14 @@
+# Replit specific
+.replit
+replit.nix
+.cache
+.upm
+.config
+
+# Build artifacts
+*.tgz
+.vscode/
+
+# Scripts
+push*.sh
+*clean*.sh

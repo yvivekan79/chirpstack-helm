@@ -1,0 +1,2 @@
+# This ConfigMap has been merged into configmap-init.yaml
+# Keeping this file for backward compatibility, but it should be removed in the future

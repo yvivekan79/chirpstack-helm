@@ -1,0 +1,95 @@
+# Sensor Map Helm chart values
+
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "alpine"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Map configuration
+config:
+  # API endpoint paths
+  api:
+    airQualitySensors: "/api/sensors/air-quality"
+    temperatureHumiditySensors: "/api/sensors/temperature-humidity"
+    allSensors: "/api/sensors/all"
+    
+  # Map UI settings  
+  ui:
+    defaultCenter:
+      lat: 0
+      lng: 0
+    defaultZoom: 2
+    updateInterval: 5000
+    mapProvider: "openstreetmap" # openstreetmap, google, mapbox
+    
+  # Map features
+  features:
+    clustering: true
+    heatmap: true
+    timeline: true
+    filterByType: true
+    filterByValue: true
+    realTimeUpdates: true
+    healthIndicators: true
+    healthHeatmap: true
+    
+  # Database connection
+  database:
+    type: "timescaledb"
+    host: "{{ .Release.Name }}-timescaledb"
+    port: 5432
+    database: "iot_timeseries"
+    user: "postgres"
+    existingSecret: ""
+    existingSecretKey: "postgres-password"
+    
+  # Kafka connection (for real-time updates)
+  kafka:
+    enabled: true
+    brokers: ["{{ .Release.Name }}-kafka-0.{{ .Release.Name }}-kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"]
+    topics:
+      - "realtime-gr-dss-airqualitysensor"
+      - "realtime-gr-dss-temperaturehumiditysensor"
+    consumerGroup: "sensor-map-consumer"
+
+# Service configuration
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30180
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: sensor-map.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

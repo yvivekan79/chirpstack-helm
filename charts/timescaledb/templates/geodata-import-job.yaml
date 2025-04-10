@@ -1,0 +1,153 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-geodata-import
+  labels:
+    app: {{ .Release.Name }}-geodata-import
+    {{- include "chirpstack.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-geodata-import
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-timescaledb
+        image: postgres:14-alpine
+        command: ['sh', '-c', 'until pg_isready -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }}; do echo waiting for database; sleep 2; done;']
+      containers:
+      - name: geodata-processor
+        image: osgeo/gdal:alpine-normal-3.6.3
+        command: ["/scripts/process-amazon-geodata.sh"]
+        volumeMounts:
+        - name: geodata
+          mountPath: /data
+        - name: processed-data
+          mountPath: /output
+        - name: scripts
+          mountPath: /scripts
+      - name: data-importer
+        image: postgres:14-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # First create the tables if they don't exist
+          psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} <<EOF
+          -- Create extension if not exists (should already be created by init scripts)
+          CREATE EXTENSION IF NOT EXISTS postgis;
+
+          -- Conservation areas table
+          CREATE TABLE IF NOT EXISTS amazon_conservation_areas (
+            id SERIAL PRIMARY KEY,
+            area_name TEXT NOT NULL,
+            conservation_type TEXT,
+            protection_status TEXT,
+            country TEXT,
+            establishment_date TEXT,
+            center_latitude FLOAT,
+            center_longitude FLOAT,
+            boundary_polygon GEOMETRY(POLYGON, 4326)
+          );
+
+          -- Indigenous territories table
+          CREATE TABLE IF NOT EXISTS amazon_indigenous_territories (
+            id SERIAL PRIMARY KEY,
+            territory_name TEXT NOT NULL,
+            indigenous_group TEXT,
+            recognition_status TEXT,
+            country TEXT,
+            estimated_population INTEGER,
+            center_latitude FLOAT,
+            center_longitude FLOAT,
+            boundary_polygon GEOMETRY(POLYGON, 4326)
+          );
+
+          -- River networks table
+          CREATE TABLE IF NOT EXISTS amazon_river_networks (
+            id SERIAL PRIMARY KEY,
+            river_name TEXT NOT NULL,
+            river_type TEXT,
+            river_basin TEXT,
+            country TEXT,
+            flow_rate FLOAT,
+            river_linestring GEOMETRY(LINESTRING, 4326)
+          );
+
+          -- Deforestation risk zones table
+          CREATE TABLE IF NOT EXISTS amazon_deforestation_risk (
+            id INTEGER PRIMARY KEY,
+            risk_level TEXT NOT NULL,
+            primary_cause TEXT,
+            year_observed INTEGER,
+            forest_type TEXT,
+            center_latitude FLOAT,
+            center_longitude FLOAT,
+            risk_zone_polygon GEOMETRY(POLYGON, 4326)
+          );
+          EOF
+
+          # Import the data
+          if [ -f /output/import-data/conservation_areas/conservation_areas_processed.csv ]; then
+            echo "Importing conservation areas data..."
+            psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} -c "\
+              COPY amazon_conservation_areas(area_name, conservation_type, protection_status, country, establishment_date, center_latitude, center_longitude, boundary_polygon) \
+              FROM '/output/import-data/conservation_areas/conservation_areas_processed.csv' \
+              WITH (FORMAT csv, HEADER true);"
+          fi
+
+          if [ -f /output/import-data/indigenous_territories/indigenous_territories_processed.csv ]; then
+            echo "Importing indigenous territories data..."
+            psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} -c "\
+              COPY amazon_indigenous_territories(territory_name, indigenous_group, recognition_status, country, estimated_population, center_latitude, center_longitude, boundary_polygon) \
+              FROM '/output/import-data/indigenous_territories/indigenous_territories_processed.csv' \
+              WITH (FORMAT csv, HEADER true);"
+          fi
+
+          if [ -f /output/import-data/river_networks/river_networks_processed.csv ]; then
+            echo "Importing river networks data..."
+            psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} -c "\
+              COPY amazon_river_networks(river_name, river_type, river_basin, country, flow_rate, river_linestring) \
+              FROM '/output/import-data/river_networks/river_networks_processed.csv' \
+              WITH (FORMAT csv, HEADER true);"
+          fi
+
+          if [ -f /output/import-data/deforestation_risk/deforestation_risk_processed.csv ]; then
+            echo "Importing deforestation risk data..."
+            psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} -c "\
+              COPY amazon_deforestation_risk(id, risk_level, primary_cause, year_observed, forest_type, center_latitude, center_longitude, risk_zone_polygon) \
+              FROM '/output/import-data/deforestation_risk/deforestation_risk_processed.csv' \
+              WITH (FORMAT csv, HEADER true);"
+          fi
+
+          echo "Creating spatial indexes..."
+          psql -h {{ .Values.config.postgresql.host }} -p {{ .Values.config.postgresql.port }} -U {{ .Values.config.postgresql.user }} -d {{ .Values.config.postgresql.database }} <<EOF
+          -- Create spatial indexes for better query performance
+          CREATE INDEX IF NOT EXISTS idx_conservation_areas_geom ON amazon_conservation_areas USING GIST(boundary_polygon);
+          CREATE INDEX IF NOT EXISTS idx_indigenous_territories_geom ON amazon_indigenous_territories USING GIST(boundary_polygon);
+          CREATE INDEX IF NOT EXISTS idx_river_networks_geom ON amazon_river_networks USING GIST(river_linestring);
+          CREATE INDEX IF NOT EXISTS idx_deforestation_risk_geom ON amazon_deforestation_risk USING GIST(risk_zone_polygon);
+          EOF
+
+          echo "All geospatial data imported successfully"
+        env:
+        - name: PGPASSWORD
+          value: {{ .Values.config.postgresql.password | quote }}
+        volumeMounts:
+        - name: processed-data
+          mountPath: /output
+      volumes:
+      - name: geodata
+        configMap:
+          name: {{ .Release.Name }}-amazon-geodata
+      - name: processed-data
+        emptyDir: {}
+      - name: scripts
+        configMap:
+          name: {{ .Release.Name }}-geodata-scripts
+          defaultMode: 0755

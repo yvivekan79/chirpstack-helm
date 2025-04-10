@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-geodata-scripts
+  labels:
+    app: {{ .Release.Name }}-geodata-scripts
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  process-amazon-geodata.sh: |-
+    #!/bin/bash
+
+    # Script to process Amazon rainforest geospatial data for import into TimescaleDB/PostGIS
+    # This prepares conservation areas, indigenous territories, river networks, and deforestation risk zones
+
+    # Set up directories
+    mkdir -p /output/import-data
+    rm -rf /output/import-data/conservation_areas
+    rm -rf /output/import-data/indigenous_territories
+    rm -rf /output/import-data/river_networks
+    rm -rf /output/import-data/deforestation_risk
+    mkdir -p /output/import-data/conservation_areas
+    mkdir -p /output/import-data/indigenous_territories
+    mkdir -p /output/import-data/river_networks
+    mkdir -p /output/import-data/deforestation_risk
+
+    echo "Processing Amazon conservation areas..."
+    # Convert conservation areas GeoJSON to CSV with WKT geometry
+    ogr2ogr -f 'CSV' -overwrite /output/import-data/conservation_areas /data/amazon_conservation_areas.geojson -lco GEOMETRY=AS_WKT
+    # Process the CSV to select and rename columns
+    ogr2ogr -f 'CSV' /output/import-data/conservation_areas/conservation_areas_processed.csv /output/import-data/conservation_areas/amazon_conservation_areas.csv \
+        -sql "SELECT name as area_name, 
+               type as conservation_type, 
+               status as protection_status, 
+               country, 
+               established as establishment_date,
+               centerLat as center_latitude, 
+               centerLng as center_longitude, 
+               WKT as boundary_polygon 
+               FROM amazon_conservation_areas 
+               WHERE WKT LIKE 'POLY%'"
+
+    echo "Processing indigenous territories..."
+    # Convert indigenous territories GeoJSON to CSV with WKT geometry
+    ogr2ogr -f 'CSV' -overwrite /output/import-data/indigenous_territories /data/amazon_indigenous_territories.geojson -lco GEOMETRY=AS_WKT
+    # Process the CSV to select and rename columns
+    ogr2ogr -f 'CSV' /output/import-data/indigenous_territories/indigenous_territories_processed.csv /output/import-data/indigenous_territories/amazon_indigenous_territories.csv \
+        -sql "SELECT name as territory_name, 
+               group_name as indigenous_group, 
+               status as recognition_status, 
+               country,
+               population as estimated_population, 
+               centerLat as center_latitude, 
+               centerLng as center_longitude, 
+               WKT as boundary_polygon 
+               FROM amazon_indigenous_territories 
+               WHERE WKT LIKE 'POLY%'"
+
+    echo "Processing Amazon river networks..."
+    # Convert river networks GeoJSON to CSV with WKT geometry
+    ogr2ogr -f 'CSV' -overwrite /output/import-data/river_networks /data/amazon_river_networks.geojson -lco GEOMETRY=AS_WKT
+    # Process the CSV to select and rename columns
+    ogr2ogr -f 'CSV' /output/import-data/river_networks/river_networks_processed.csv /output/import-data/river_networks/amazon_river_networks.csv \
+        -sql "SELECT name as river_name, 
+               type as river_type, 
+               basin as river_basin,
+               country,
+               flow_rate,
+               WKT as river_linestring 
+               FROM amazon_river_networks 
+               WHERE WKT LIKE 'LINE%'"
+
+    echo "Processing deforestation risk zones..."
+    # Convert deforestation risk GeoJSON to CSV with WKT geometry
+    ogr2ogr -f 'CSV' -overwrite /output/import-data/deforestation_risk /data/amazon_deforestation_risk.geojson -lco GEOMETRY=AS_WKT
+    # Process the CSV to select and rename columns
+    ogr2ogr -f 'CSV' /output/import-data/deforestation_risk/deforestation_risk_processed.csv /output/import-data/deforestation_risk/amazon_deforestation_risk.csv \
+        -sql "SELECT id, 
+               risk_level, 
+               cause as primary_cause, 
+               year_observed,
+               forest_type,
+               centerLat as center_latitude, 
+               centerLng as center_longitude, 
+               WKT as risk_zone_polygon 
+               FROM amazon_deforestation_risk 
+               WHERE WKT LIKE 'POLY%'"
+
+    echo "All geospatial data processed successfully"
+    ls -la /output/import-data/*/

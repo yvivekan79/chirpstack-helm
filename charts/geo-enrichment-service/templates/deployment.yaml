@@ -1,0 +1,335 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-geo-enrichment-service
+  labels:
+    app: {{ .Release.Name }}-geo-enrichment-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-geo-enrichment-service
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-geo-enrichment-service
+    spec:
+      containers:
+      - name: geo-enrichment-service
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # Install required packages
+          apk add --no-cache curl jq
+
+          # Create app directory
+          mkdir -p /app
+          cd /app
+
+          # Create package.json
+          cat > package.json << 'EOF'
+          {
+            "name": "geo-enrichment-service",
+            "version": "1.0.0",
+            "description": "Geospatial enrichment service for IoT sensors",
+            "main": "server.js",
+            "scripts": {
+              "start": "node server.js"
+            },
+            "dependencies": {
+              "express": "^4.17.1",
+              "pg": "^8.7.1",
+              "cors": "^2.8.5",
+              "morgan": "^1.10.0"
+            }
+          }
+          EOF
+
+          # Create server.js
+          cat > server.js << 'EOF'
+          const express = require('express');
+          const { Pool } = require('pg');
+          const cors = require('cors');
+          const morgan = require('morgan');
+          const fs = require('fs');
+          const path = require('path');
+
+          // Create Express app
+          const app = express();
+          const PORT = process.env.PORT || 8080;
+
+          // Middleware
+          app.use(cors());
+          app.use(morgan('combined'));
+          app.use(express.json());
+
+          // Database connection
+          const pool = new Pool({
+            host: process.env.DB_HOST,
+            port: process.env.DB_PORT,
+            database: process.env.DB_NAME,
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD
+          });
+
+          // In-memory cache for locations
+          let locationCache = [];
+          let lastRefreshTime = 0;
+          const REFRESH_INTERVAL = parseInt(process.env.REFRESH_INTERVAL || '30', 10) * 60 * 1000; // Default 30 minutes
+
+          // Initialize database and tables
+          async function initializeDatabase() {
+            const client = await pool.connect();
+            try {
+              console.log('Initializing database...');
+              
+              // Create locations table if it doesn't exist
+              await client.query(`
+                CREATE TABLE IF NOT EXISTS geo_locations (
+                  id SERIAL PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  latitude DOUBLE PRECISION NOT NULL,
+                  longitude DOUBLE PRECISION NOT NULL,
+                  radius DOUBLE PRECISION DEFAULT 100,
+                  properties JSONB DEFAULT '{}'::jsonb,
+                  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                  location GEOGRAPHY(Point, 4326)
+                );
+                
+                -- Create GiST index on the geography column
+                CREATE INDEX IF NOT EXISTS geo_locations_geography_idx ON geo_locations USING GIST (location);
+                
+                -- Create trigger to automatically update location column
+                CREATE OR REPLACE FUNCTION update_geo_location_trigger()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                  NEW.location = ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+                  NEW.updated_at = NOW();
+                  RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                
+                DROP TRIGGER IF EXISTS trigger_update_geo_location ON geo_locations;
+                CREATE TRIGGER trigger_update_geo_location
+                BEFORE INSERT OR UPDATE ON geo_locations
+                FOR EACH ROW EXECUTE FUNCTION update_geo_location_trigger();
+              `);
+              
+              // If import default locations is true, check if table is empty and import
+              if (process.env.IMPORT_DEFAULT_LOCATIONS === 'true') {
+                const result = await client.query('SELECT COUNT(*) FROM geo_locations');
+                if (parseInt(result.rows[0].count, 10) === 0) {
+                  console.log('Importing default locations...');
+                  
+                  // Read default locations from file if it exists
+                  if (fs.existsSync('/config/default-locations.json')) {
+                    const defaultLocations = JSON.parse(fs.readFileSync('/config/default-locations.json', 'utf8'));
+                    for (const location of defaultLocations) {
+                      await client.query(
+                        'INSERT INTO geo_locations (name, type, latitude, longitude, radius, properties) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [location.name, location.type, location.latitude, location.longitude, location.radius || 100, location.properties || {}]
+                      );
+                    }
+                    console.log(`Imported ${defaultLocations.length} default locations`);
+                  } else {
+                    console.log('No default locations file found at /config/default-locations.json');
+                  }
+                }
+              }
+              
+              console.log('Database initialization complete');
+            } catch (error) {
+              console.error('Error initializing database:', error);
+            } finally {
+              client.release();
+            }
+          }
+
+          // Load locations from database
+          async function loadLocations() {
+            const now = Date.now();
+            if (now - lastRefreshTime < REFRESH_INTERVAL && locationCache.length > 0) {
+              return locationCache;
+            }
+            
+            try {
+              const result = await pool.query(`
+                SELECT 
+                  id, 
+                  name, 
+                  type, 
+                  latitude, 
+                  longitude, 
+                  radius, 
+                  properties,
+                  ST_AsGeoJSON(location) AS geojson
+                FROM 
+                  geo_locations
+                ORDER BY 
+                  name ASC
+              `);
+              
+              locationCache = result.rows.map(row => ({
+                id: row.id,
+                name: row.name,
+                type: row.type,
+                location: {
+                  latitude: row.latitude,
+                  longitude: row.longitude
+                },
+                radius: row.radius,
+                properties: row.properties,
+                geojson: JSON.parse(row.geojson)
+              }));
+              
+              lastRefreshTime = now;
+              console.log(`Loaded ${locationCache.length} locations from database`);
+              return locationCache;
+            } catch (error) {
+              console.error('Error loading locations:', error);
+              return [];
+            }
+          }
+
+          // API endpoint to get all locations
+          app.get('/api/locations', async (req, res) => {
+            try {
+              const locations = await loadLocations();
+              res.json(locations);
+            } catch (error) {
+              console.error('Error retrieving locations:', error);
+              res.status(500).json({ error: 'Failed to retrieve locations' });
+            }
+          });
+
+          // API endpoint to get nearby locations
+          app.get('/api/locations/nearby', async (req, res) => {
+            const { lat, lon, radius = 1000 } = req.query;
+            
+            if (!lat || !lon) {
+              return res.status(400).json({ error: 'Latitude and longitude are required' });
+            }
+            
+            try {
+              const result = await pool.query(`
+                SELECT 
+                  id, 
+                  name, 
+                  type, 
+                  latitude, 
+                  longitude, 
+                  radius, 
+                  properties,
+                  ST_Distance(
+                    location, 
+                    ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+                  ) AS distance
+                FROM 
+                  geo_locations
+                WHERE 
+                  ST_DWithin(
+                    location, 
+                    ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, 
+                    $3
+                  )
+                ORDER BY 
+                  distance ASC
+              `, [lat, lon, radius]);
+              
+              res.json(result.rows.map(row => ({
+                id: row.id,
+                name: row.name,
+                type: row.type,
+                location: {
+                  latitude: row.latitude,
+                  longitude: row.longitude
+                },
+                radius: row.radius,
+                properties: row.properties,
+                distance: row.distance
+              })));
+            } catch (error) {
+              console.error('Error retrieving nearby locations:', error);
+              res.status(500).json({ error: 'Failed to retrieve nearby locations' });
+            }
+          });
+
+          // API endpoint to create a location
+          app.post('/api/locations', async (req, res) => {
+            const { name, type, latitude, longitude, radius, properties } = req.body;
+            
+            if (!name || !type || !latitude || !longitude) {
+              return res.status(400).json({ error: 'Name, type, latitude, and longitude are required' });
+            }
+            
+            try {
+              const result = await pool.query(
+                'INSERT INTO geo_locations (name, type, latitude, longitude, radius, properties) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+                [name, type, latitude, longitude, radius || 100, properties || {}]
+              );
+              
+              // Clear the cache to force a refresh
+              lastRefreshTime = 0;
+              
+              res.status(201).json(result.rows[0]);
+            } catch (error) {
+              console.error('Error creating location:', error);
+              res.status(500).json({ error: 'Failed to create location' });
+            }
+          });
+
+          // Health check endpoint
+          app.get('/health', (req, res) => {
+            res.json({ status: 'ok', time: new Date().toISOString() });
+          });
+
+          // Initialize database on startup
+          initializeDatabase()
+            .then(() => {
+              // Start server
+              app.listen(PORT, () => {
+                console.log(`Geo-enrichment service listening on port ${PORT}`);
+              });
+            })
+            .catch(error => {
+              console.error('Failed to initialize application:', error);
+              process.exit(1);
+            });
+          EOF
+
+          # Install dependencies
+          npm install
+
+          # Start the server
+          npm start
+        env:
+        - name: DB_HOST
+          value: "{{ .Values.database.host }}"
+        - name: DB_PORT
+          value: "{{ .Values.database.port }}"
+        - name: DB_NAME
+          value: "{{ .Values.database.name }}"
+        - name: DB_USER
+          value: "{{ .Values.database.user }}"
+        - name: DB_PASSWORD
+          value: "{{ .Values.database.password }}"
+        - name: REFRESH_INTERVAL
+          value: "{{ .Values.locationData.refreshInterval }}"
+        - name: IMPORT_DEFAULT_LOCATIONS
+          value: "{{ .Values.locationData.importDefaultLocations }}"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config-volume
+          mountPath: /config
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+      - name: config-volume
+        configMap:
+          name: {{ .Release.Name }}-geo-enrichment-config

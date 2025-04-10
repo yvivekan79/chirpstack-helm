@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-emqx-config
+  labels:
+    app: {{ .Release.Name }}-emqx
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  # EMQX 4.4.x configuration for ChirpStack (compatible format)
+  emqx.conf: |
+    ## Node name
+    node.name = emqx@${POD_IP}
+    
+    ## Node cookie for distributed node communication
+    node.cookie = emqxsecretcookie
+    
+    ## MQTT Listeners
+    listener.tcp.external = 0.0.0.0:1883
+    listener.tcp.external.acceptors = 8
+    listener.tcp.external.max_connections = 1024000
+    
+    ## Dashboard Listener (using 4.4.x format)
+    dashboard.listen.http = 18083
+    dashboard.default_user.login = admin
+    dashboard.default_user.password = public
+    
+    ## Allow anonymous access (4.4.x format)
+    allow_anonymous = true
+    
+    ## Set MQTT topics limits
+    mqtt.max_topic_levels = 128
+    
+    ## Shared subscription for better load balancing
+    broker.shared_subscription_strategy = round_robin
+    
+    ## Performance tuning
+    broker.shared_subscription_strategy = round_robin
+    broker.sys_interval = 30s
+    
+    ## Logging (4.4.x format)
+    log.to = console
+    log.level = info
+    
+    ## ACL settings (4.4.x format)
+    acl_nomatch = allow
+    acl_file = etc/acl.conf
+    
+    ## Cluster configuration for 4.4.x
+    ## Using DNS-based discovery for automatic clustering
+    cluster.discovery = dns
+    ## DNS name for discovery - this is the headless service
+    cluster.dns.name = {{ .Release.Name }}-emqx-headless.{{ .Release.Namespace }}.svc.cluster.local
+    ## Automatic node cleaning - automatically removes disconnected nodes from cluster
+    cluster.autoclean = 5m
+    
+    ## Auto healing in 4.4.x is called autoheal
+    cluster.autoheal = on
+    
+    ## Node name type in 4.4.x - use 'dns' type
+    cluster.dns.type = srv
+    
+    ## Process and connection limits
+    node.process_limit = 2097152
+    node.max_ports = 1048576
+    
+    ## Security options
+    ## Force use TLS for dashboard if necessary
+    ## dashboard.listen.https = 18084

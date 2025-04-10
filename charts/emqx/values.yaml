@@ -1,0 +1,29 @@
+# Default values for EMQX
+image:
+  repository: emqx/emqx
+  tag: 5.1.1  # Updated to newer EMQX 5.x series for better performance and security
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+storage:
+  enabled: true
+  size: 5Gi
+  class: ""  # Use default storage class
+
+service:
+  type: ClusterIP
+  mqttPort: 1883
+  mqttsPort: 8883
+  dashboardPort: 18083
+
+config:
+  adminPassword: public

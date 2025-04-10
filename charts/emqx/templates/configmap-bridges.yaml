@@ -1,0 +1,176 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-emqx-bridges
+  labels:
+    app: {{ .Release.Name }}-emqx-bridges
+    {{- include "chirpstack.labels" . | nindent 4 }}
+data:
+  configure-bridges.sh: |-
+    #!/bin/sh
+
+    # Script to configure EMQX to Kafka bridges
+    # This configures bridges for LoRaWAN device data and simulated data
+
+    # Wait for EMQX to be ready
+    echo "Waiting for EMQX API to be available..."
+    until $(curl --output /dev/null --silent --fail http://localhost:18083/api/v5/status); do
+      echo "Waiting for EMQX API..."
+      sleep 5
+    done
+
+    # EMQX API URL - using localhost since this runs as part of EMQX pod
+    EMQX_API_URL=http://localhost:18083
+
+    echo "Getting authentication token..."
+    token=$(curl -s -X POST $EMQX_API_URL/api/v5/login \
+        -H "Content-Type: application/json" \
+        -d '{
+            "username": "admin",
+            "password": "{{ .Values.config.adminPassword }}"
+        }' | jq -r '.token')
+
+    if [ -z "$token" ] || [ "$token" = "null" ]; then
+      echo "Failed to get authentication token. Exiting."
+      exit 1
+    fi
+
+    echo "Creating LoRaWAN device data bridge to Kafka..."
+    curl -s -X POST $EMQX_API_URL/api/v5/bridges \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $token" \
+        -d '{
+            "type": "kafka",
+            "name": "kafka-lorawan-device-data",
+            "bootstrap_hosts": "{{ .Release.Name }}-kafka:9092",
+            "connect_timeout": "5s",
+            "min_metadata_refresh_interval": "3s",
+            "metadata_request_timeout": "5s",
+            "authentication": "none",
+            "socket_opts": {
+                "sndbuf": "1024KB",
+                "recbuf": "1024KB",
+                "tcp_keepalive": "none",
+                "nodelay": true
+            },
+            "ssl": {
+                "enable": false,
+                "verify": "verify_peer"
+            },
+            "resource_opts": {
+                "health_check_interval": "15s"
+            },
+            "kafka": {
+                "topic": "lorawan-device-data",
+                "message": {
+                    "key": "${.clientid}",
+                    "value": "${.payload}",
+                    "timestamp": "${.timestamp}"
+                },
+                "max_batch_bytes": "896KB",
+                "compression": "no_compression",
+                "partition_strategy": "random",
+                "required_acks": "all_isr",
+                "partition_count_refresh_interval": "60s",
+                "max_inflight": 10,
+                "query_mode": "async",
+                "sync_query_timeout": "5s",
+                "kafka_ext_headers": [
+                    {
+                        "kafka_ext_header_key": "mqtt-topic",
+                        "kafka_ext_header_value": "${topic}"
+                    }
+                ],
+                "kafka_header_value_encode_mode": "none",
+                "buffer": {
+                    "mode": "memory",
+                    "per_partition_limit": "2GB",
+                    "segment_bytes": "100MB",
+                    "memory_overload_protection": false
+                }
+            }
+        }'
+
+    echo "Creating Amazon rainforest simulation data bridge to Kafka..."
+    curl -s -X POST $EMQX_API_URL/api/v5/bridges \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $token" \
+        -d '{
+            "type": "kafka",
+            "name": "kafka-amazon-simulate",
+            "bootstrap_hosts": "{{ .Release.Name }}-kafka:9092",
+            "connect_timeout": "5s",
+            "min_metadata_refresh_interval": "3s",
+            "metadata_request_timeout": "5s",
+            "authentication": "none",
+            "socket_opts": {
+                "sndbuf": "1024KB",
+                "recbuf": "1024KB",
+                "tcp_keepalive": "none",
+                "nodelay": true
+            },
+            "ssl": {
+                "enable": false,
+                "verify": "verify_peer"
+            },
+            "resource_opts": {
+                "health_check_interval": "15s"
+            },
+            "kafka": {
+                "topic": "amazon-rainforest-simulate",
+                "message": {
+                    "key": "${.clientid}",
+                    "value": "${.payload}",
+                    "timestamp": "${.timestamp}"
+                },
+                "max_batch_bytes": "896KB",
+                "compression": "no_compression",
+                "partition_strategy": "random",
+                "required_acks": "all_isr",
+                "partition_count_refresh_interval": "60s",
+                "max_inflight": 10,
+                "query_mode": "async",
+                "sync_query_timeout": "5s",
+                "kafka_ext_headers": [
+                    {
+                        "kafka_ext_header_key": "mqtt-topic",
+                        "kafka_ext_header_value": "${topic}"
+                    }
+                ],
+                "kafka_header_value_encode_mode": "none",
+                "buffer": {
+                    "mode": "memory",
+                    "per_partition_limit": "2GB",
+                    "segment_bytes": "100MB",
+                    "memory_overload_protection": false
+                }
+            }
+        }'
+
+    echo "Creating device data rule..."
+    curl -s -X POST $EMQX_API_URL/api/v5/rules \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $token" \
+        -d '{
+            "id": "lorawan-device-data-rule",
+            "sql": "SELECT clientid, payload, topic FROM \"application/+/device/+/event/+\"",
+            "actions": [
+                "kafka_producer:kafka-lorawan-device-data"
+            ],
+            "description": "Forward ChirpStack application server device events to Kafka"
+        }'
+
+    echo "Creating simulation data rule..."
+    curl -s -X POST $EMQX_API_URL/api/v5/rules \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $token" \
+        -d '{
+            "id": "amazon-rainforest-simulate-rule",
+            "sql": "SELECT clientid, payload, topic FROM \"amazon-rainforest/simulate/#\"",
+            "actions": [
+                "kafka_producer:kafka-amazon-simulate"
+            ],
+            "description": "Forward Amazon rainforest simulation data to Kafka"
+        }'
+
+    echo "EMQX bridge configuration completed"

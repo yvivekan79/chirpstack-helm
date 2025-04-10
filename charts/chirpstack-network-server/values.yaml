@@ -1,0 +1,35 @@
+# Default values for chirpstack-network-server
+replicaCount: 1
+
+image:
+  repository: chirpstack/chirpstack-network-server
+  tag: 3.17.3
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+
+service:
+  type: NodePort
+  port: 8000
+  nodePort: 30000
+
+config:
+  postgresql:
+    dsn: "postgres://chirpstack:${PGPASSWORD}@postgresql:5432/chirpstack_ns?sslmode=disable"
+  redis:
+    url: "redis://redis:6379"
+  network_server:
+    net_id: "000000"
+    band:
+      name: "EU868"
+    gateway:
+      mqtt:
+        event_topic: "gateway/+/event/+"
+        command_topic_template: "gateway/{{ .GatewayID }}/command/{{ .CommandType }}"
+        server: "tcp://emqx:1883"

@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-chirpstack-network-server-config
+  labels:
+    app: {{ .Release.Name }}-chirpstack-network-server
+data:
+  chirpstack-network-server.toml: |
+    # ChirpStack Network Server configuration
+
+    # PostgreSQL settings
+    [postgresql]
+    dsn = "{{ .Values.config.postgresql.dsn | default (printf "postgres://chirpstack:${PGPASSWORD}@%s-postgresql:5432/chirpstack_ns?sslmode=disable" .Release.Name) }}"
+
+    # Redis settings
+    [redis]
+    url = "{{ .Values.config.redis.url | default (printf "redis://%s-redis:6379" .Release.Name) }}"
+
+    # Network server settings
+    [network_server]
+    net_id = "{{ .Values.config.network_server.net_id }}"
+
+    # Band configuration
+    [network_server.band]
+    name = "{{ .Values.config.network_server.band.name }}"
+
+    # Gateway settings
+    [network_server.gateway]
+    # MQTT settings for gateway communication
+    [network_server.gateway.mqtt]
+    event_topic = "{{ .Values.config.network_server.gateway.mqtt.event_topic }}"
+    command_topic_template = "{{ .Values.config.network_server.gateway.mqtt.command_topic_template }}"
+    server = "{{ .Values.config.network_server.gateway.mqtt.server | default (printf "tcp://%s-emqx:1883" .Release.Name) }}"
+
+    # API interface
+    [api]
+    bind = "0.0.0.0:8000"
+
+    # Metrics for monitoring
+    [metrics]
+    timezone = "UTC"
+
+    # Join-server interface
+    [join_server]
+    bind = "0.0.0.0:8003"
+
+    # Network-controller interface
+    [network_controller]
+    bind = "0.0.0.0:8004"

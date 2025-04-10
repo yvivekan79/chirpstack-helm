@@ -1,0 +1,78 @@
+# Connectivity Fairy Helm chart values
+
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "alpine"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Connectivity Fairy configuration
+config:
+  # Mascot type: "fairy", "wizard", "robot", "unicorn"
+  mascotType: "fairy"
+  
+  # Scanning interval in seconds
+  scanInterval: 60
+  
+  # Whether to show cute animations
+  enableAnimations: true
+  
+  # Theme color scheme: "pastel", "vibrant", "dark", "light" 
+  colorScheme: "pastel"
+  
+  # Components to monitor
+  componentsToMonitor:
+    - emqx
+    - kafka
+    - postgresql
+    - redis
+    - timescaledb
+    - chirpstack-gateway-bridge
+    - chirpstack-network-server
+    - chirpstack-application-server
+    - telegraf
+
+# Service configuration
+service:
+  type: NodePort
+  port: 80
+  nodePort: 30280
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: connectivity-fairy.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Role-based access control for checking connectivity
+rbac:
+  create: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

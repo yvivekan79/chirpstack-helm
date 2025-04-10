@@ -1,0 +1,6 @@
+apiVersion: v2
+name: lwnsimulator
+description: LoRaWAN Network Simulator for testing ChirpStack deployments
+type: application
+version: 0.1.0
+appVersion: "latest"

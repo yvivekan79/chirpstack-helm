@@ -1,0 +1,27 @@
+# Default values for PostgreSQL
+image:
+  repository: postgres
+  tag: 14.5-alpine
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+storage:
+  size: 10Gi
+  class: local-path
+
+service:
+  type: ClusterIP
+  port: 5432
+
+# Database configuration
+database:
+  name: chirpstack
+  user: chirpstack
+  # password is taken from environment variable

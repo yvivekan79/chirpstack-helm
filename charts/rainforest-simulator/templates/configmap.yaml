@@ -1,0 +1,447 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-rainforest-simulator
+  labels:
+    app: {{ .Release.Name }}-rainforest-simulator
+data:
+  simulator.py: |-
+    #!/usr/bin/env python3
+    # Amazon Rainforest Environmental Data Simulator
+    # This script simulates various types of environmental sensors in the Amazon rainforest
+    # and publishes the data to MQTT topics for processing by the IoT pipeline
+
+    import json
+    import time
+    import random
+    import os
+    import paho.mqtt.client as mqtt
+    import logging
+    import uuid
+    from datetime import datetime
+    from threading import Thread
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger("rainforest-simulator")
+
+    # Environment variables with defaults
+    MQTT_HOST = os.environ.get("MQTT_HOST", "emqx")
+    MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
+    MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
+    MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "")
+    MQTT_CLIENT_ID = os.environ.get("MQTT_CLIENT_ID", f"rainforest-simulator-{uuid.uuid4().hex[:8]}")
+    MQTT_TOPIC_PREFIX = os.environ.get("MQTT_TOPIC_PREFIX", "amazon-rainforest/simulate")
+
+    SENSOR_COUNT = int(os.environ.get("SENSOR_COUNT", 10))
+    INTERVAL_SECONDS = int(os.environ.get("INTERVAL_SECONDS", 60))
+
+    # Amazon rainforest region (central Brazil Amazon, near Manaus)
+    # Default coordinates roughly cover the central Amazon basin
+    MIN_LAT = float(os.environ.get("MIN_LAT", -5.0))
+    MAX_LAT = float(os.environ.get("MAX_LAT", -2.0))
+    MIN_LON = float(os.environ.get("MIN_LON", -67.0))
+    MAX_LON = float(os.environ.get("MAX_LON", -59.0))
+
+    # Sensor types with default distributions
+    SENSOR_TYPES = [
+        {"type": "airQuality", "percentage": 50},
+        {"type": "temperatureHumidity", "percentage": 30},
+        {"type": "rainfall", "percentage": 20}
+    ]
+
+    # Ecosystem zones with distributions
+    ECOSYSTEM_ZONES = [
+        {"name": "varzea_floodplain", "percentage": 30},
+        {"name": "terra_firme", "percentage": 40},
+        {"name": "igapo", "percentage": 15},
+        {"name": "campinarana", "percentage": 10},
+        {"name": "montane", "percentage": 5}
+    ]
+
+    # Conservation statuses
+    CONSERVATION_STATUSES = [
+        {"name": "protected_area", "percentage": 30},
+        {"name": "indigenous_territory", "percentage": 20},
+        {"name": "sustainable_use", "percentage": 15},
+        {"name": "unprotected", "percentage": 35}
+    ]
+
+    # Forest types and their characteristics
+    FOREST_TYPES = {
+        "varzea_floodplain": {
+            "canopy_height_range": (20, 35),  # meters
+            "temperature_range": (24, 33),    # °C
+            "humidity_range": (75, 95),       # %
+            "rainfall_range": (2000, 3000),   # mm/year (converted to mm/day in simulation)
+            "altitude_range": (10, 80)        # meters
+        },
+        "terra_firme": {
+            "canopy_height_range": (30, 50),
+            "temperature_range": (22, 30),
+            "humidity_range": (70, 90),
+            "rainfall_range": (1800, 2500),
+            "altitude_range": (80, 200)
+        },
+        "igapo": {
+            "canopy_height_range": (20, 30),
+            "temperature_range": (25, 32),
+            "humidity_range": (80, 98),
+            "rainfall_range": (2200, 3200),
+            "altitude_range": (5, 50)
+        },
+        "campinarana": {
+            "canopy_height_range": (15, 25),
+            "temperature_range": (23, 32),
+            "humidity_range": (60, 85),
+            "rainfall_range": (1500, 2200),
+            "altitude_range": (50, 150)
+        },
+        "montane": {
+            "canopy_height_range": (10, 25),
+            "temperature_range": (18, 26),
+            "humidity_range": (70, 92),
+            "rainfall_range": (2000, 3000),
+            "altitude_range": (500, 1200)
+        }
+    }
+
+    class VirtualSensor:
+        """Represents a virtual environmental sensor in the Amazon rainforest"""
+        
+        def __init__(self, sensor_id, sensor_type, latitude, longitude, ecosystem_zone, conservation_status):
+            self.id = sensor_id
+            self.type = sensor_type
+            self.latitude = latitude
+            self.longitude = longitude
+            self.ecosystem_zone = ecosystem_zone
+            self.conservation_status = conservation_status
+            
+            # Calculate altitude based on ecosystem zone
+            self.altitude = random.uniform(
+                FOREST_TYPES[ecosystem_zone]["altitude_range"][0],
+                FOREST_TYPES[ecosystem_zone]["altitude_range"][1]
+            )
+            
+            # Initialize with random data based on ecosystem characteristics
+            self.init_sensor_data()
+            
+            # Determine MQTT topic for this sensor
+            self.topic = f"{MQTT_TOPIC_PREFIX}/{sensor_type}/{sensor_id}"
+            
+            logger.info(f"Created virtual sensor: {self.id} ({self.type}) at {self.latitude:.6f}, {self.longitude:.6f}")
+            
+        def init_sensor_data(self):
+            """Initialize sensor data based on ecosystem characteristics"""
+            ecosystem_data = FOREST_TYPES[self.ecosystem_zone]
+            
+            # Common data for all sensor types
+            self.data = {
+                "sensor_id": self.id,
+                "sensor_type": self.type,
+                "ecosystem_zone": self.ecosystem_zone,
+                "forest_type": self.ecosystem_zone,
+                "conservation_status": self.conservation_status,
+                "location": {
+                    "latitude": self.latitude,
+                    "longitude": self.longitude,
+                    "altitude": self.altitude
+                }
+            }
+            
+            # Specific data based on sensor type
+            if self.type == "airQuality":
+                # Base values
+                base_co2 = 400  # ppm (baseline)
+                base_pm25 = 10  # μg/m³ (baseline)
+                base_pm10 = 20  # μg/m³ (baseline)
+                
+                # Adjust based on conservation status (less protected = higher pollution potential)
+                if self.conservation_status == "unprotected":
+                    pollution_factor = random.uniform(1.0, 2.0)
+                elif self.conservation_status == "sustainable_use":
+                    pollution_factor = random.uniform(0.8, 1.5)
+                else:
+                    pollution_factor = random.uniform(0.7, 1.2)
+                
+                self.data.update({
+                    "co2": base_co2 * pollution_factor,
+                    "pm25": base_pm25 * pollution_factor,
+                    "pm10": base_pm10 * pollution_factor,
+                    "o3": random.uniform(10, 40),  # ppb
+                    "voc": random.uniform(0.1, 0.5)  # ppm
+                })
+                
+            elif self.type == "temperatureHumidity":
+                temp_range = ecosystem_data["temperature_range"]
+                humidity_range = ecosystem_data["humidity_range"]
+                
+                self.data.update({
+                    "temperature": random.uniform(temp_range[0], temp_range[1]),
+                    "humidity": random.uniform(humidity_range[0], humidity_range[1]),
+                    "pressure": random.uniform(1008, 1015),  # hPa
+                    "dew_point": random.uniform(18, 24)  # °C
+                })
+                
+            elif self.type == "rainfall":
+                # Convert annual rainfall to daily values with randomness
+                annual_rainfall = random.uniform(
+                    ecosystem_data["rainfall_range"][0],
+                    ecosystem_data["rainfall_range"][1]
+                )
+                avg_daily_rainfall = annual_rainfall / 365
+                
+                # Season factor (simulating wet/dry seasons)
+                month = datetime.now().month
+                # Wet season in Amazon: December-May
+                if 12 <= month or month <= 5:
+                    season_factor = random.uniform(1.5, 3.0)
+                else:
+                    season_factor = random.uniform(0.1, 0.8)
+                
+                self.data.update({
+                    "rainfall": avg_daily_rainfall * season_factor,  # mm/day
+                    "rainfall_intensity": random.uniform(0, 15),  # mm/hour
+                    "humidity": random.uniform(
+                        ecosystem_data["humidity_range"][0],
+                        ecosystem_data["humidity_range"][1]
+                    ),
+                    "soil_moisture": random.uniform(20, 80)  # %
+                })
+        
+        def update_sensor_data(self):
+            """Update sensor data with slight variations to simulate real readings"""
+            # Add timestamp
+            self.data["timestamp"] = datetime.utcnow().isoformat() + "Z"
+            
+            # Update data based on sensor type
+            if self.type == "airQuality":
+                # Slight random variations in air quality
+                self.data["co2"] = max(350, self.data["co2"] * random.uniform(0.95, 1.05))
+                self.data["pm25"] = max(0, self.data["pm25"] * random.uniform(0.9, 1.1))
+                self.data["pm10"] = max(0, self.data["pm10"] * random.uniform(0.9, 1.1))
+                self.data["o3"] = max(0, self.data["o3"] * random.uniform(0.9, 1.1))
+                self.data["voc"] = max(0, self.data["voc"] * random.uniform(0.9, 1.1))
+                
+            elif self.type == "temperatureHumidity":
+                # Diurnal temperature variation (time of day effect)
+                hour = datetime.now().hour
+                time_factor = 1.0
+                
+                # Simulate day/night temperature changes
+                if 10 <= hour <= 14:  # Mid-day peak
+                    time_factor = random.uniform(1.05, 1.15)
+                elif 0 <= hour <= 5:  # Night-time low
+                    time_factor = random.uniform(0.85, 0.95)
+                
+                ecosystem_data = FOREST_TYPES[self.ecosystem_zone]
+                temp_base = sum(ecosystem_data["temperature_range"]) / 2
+                
+                self.data["temperature"] = max(15, min(40, temp_base * time_factor + random.uniform(-1, 1)))
+                
+                # Humidity inversely correlates with temperature
+                humidity_base = sum(ecosystem_data["humidity_range"]) / 2
+                self.data["humidity"] = max(40, min(100, humidity_base + (1 - time_factor) * 20 + random.uniform(-3, 3)))
+                
+                # Slight random variations in pressure
+                self.data["pressure"] = self.data["pressure"] + random.uniform(-0.5, 0.5)
+                # Calculate dew point from temperature and humidity
+                temp = self.data["temperature"]
+                humidity = self.data["humidity"]
+                self.data["dew_point"] = temp - ((100 - humidity) / 5)
+                
+            elif self.type == "rainfall":
+                # Check if it's "raining" (40% chance during wet season, 10% during dry)
+                month = datetime.now().month
+                is_wet_season = (12 <= month or month <= 5)
+                
+                if (is_wet_season and random.random() < 0.4) or (not is_wet_season and random.random() < 0.1):
+                    # It's raining!
+                    if is_wet_season:
+                        intensity = random.uniform(0.5, 15)  # mm/hour
+                    else:
+                        intensity = random.uniform(0.1, 5)  # mm/hour
+                    
+                    # Calculate rainfall for the interval
+                    hourly_fraction = INTERVAL_SECONDS / 3600
+                    self.data["rainfall"] = intensity * hourly_fraction
+                    self.data["rainfall_intensity"] = intensity
+                    # Increase humidity during rain
+                    self.data["humidity"] = min(100, self.data["humidity"] + random.uniform(5, 15))
+                    self.data["soil_moisture"] = min(100, self.data["soil_moisture"] + random.uniform(1, 5))
+                else:
+                    # No rain
+                    self.data["rainfall"] = 0
+                    self.data["rainfall_intensity"] = 0
+                    # Decrease soil moisture
+                    self.data["soil_moisture"] = max(10, self.data["soil_moisture"] - random.uniform(0.5, 2))
+            
+            return self.data
+        
+        def get_payload(self):
+            """Get the MQTT payload for this sensor"""
+            self.update_sensor_data()
+            return json.dumps(self.data)
+
+    class RainforestSimulator:
+        """Main simulator class that manages virtual sensors and MQTT publishing"""
+        
+        def __init__(self):
+            self.sensors = []
+            self.mqtt_client = None
+            self.running = False
+            
+            # Create MQTT client
+            self._setup_mqtt()
+            
+            # Create virtual sensors
+            self._create_sensors()
+            
+        def _setup_mqtt(self):
+            """Set up MQTT client with connection callbacks"""
+            self.mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID)
+            
+            # Set username and password if provided
+            if MQTT_USERNAME and MQTT_PASSWORD:
+                self.mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+                
+            # Set callbacks
+            self.mqtt_client.on_connect = self._on_connect
+            self.mqtt_client.on_disconnect = self._on_disconnect
+            
+            logger.info(f"Connecting to MQTT broker at {MQTT_HOST}:{MQTT_PORT}")
+            try:
+                self.mqtt_client.connect(MQTT_HOST, MQTT_PORT)
+            except Exception as e:
+                logger.error(f"Failed to connect to MQTT broker: {e}")
+                # Retry after a delay
+                time.sleep(5)
+                try:
+                    self.mqtt_client.connect(MQTT_HOST, MQTT_PORT)
+                except Exception as e:
+                    logger.error(f"Failed to connect to MQTT broker on retry: {e}")
+                    raise
+                
+            # Start network loop in separate thread
+            self.mqtt_client.loop_start()
+            
+        def _on_connect(self, client, userdata, flags, rc):
+            """Callback when client connects to MQTT broker"""
+            if rc == 0:
+                logger.info("Connected to MQTT broker successfully")
+            else:
+                logger.error(f"Failed to connect to MQTT broker with code {rc}")
+                
+        def _on_disconnect(self, client, userdata, rc):
+            """Callback when client disconnects from MQTT broker"""
+            if rc != 0:
+                logger.warning(f"Unexpected MQTT disconnection with code {rc}, trying to reconnect")
+                try:
+                    client.reconnect()
+                except Exception as e:
+                    logger.error(f"Failed to reconnect to MQTT broker: {e}")
+                    
+        def _create_sensors(self):
+            """Create virtual sensors based on configuration"""
+            logger.info(f"Creating {SENSOR_COUNT} virtual sensors...")
+            
+            # Distribute sensors based on type percentages
+            sensor_type_counts = {}
+            total_percentage = sum(t["percentage"] for t in SENSOR_TYPES)
+            
+            for sensor_type in SENSOR_TYPES:
+                type_count = int(SENSOR_COUNT * (sensor_type["percentage"] / total_percentage))
+                sensor_type_counts[sensor_type["type"]] = type_count
+                
+            # Adjust for rounding errors
+            diff = SENSOR_COUNT - sum(sensor_type_counts.values())
+            if diff > 0:
+                # Add the remaining sensors to the first type
+                first_type = SENSOR_TYPES[0]["type"]
+                sensor_type_counts[first_type] += diff
+                
+            # Create weighted distribution lists for ecosystem zones and conservation statuses
+            ecosystem_zones = []
+            for zone in ECOSYSTEM_ZONES:
+                ecosystem_zones.extend([zone["name"]] * zone["percentage"])
+                
+            conservation_statuses = []
+            for status in CONSERVATION_STATUSES:
+                conservation_statuses.extend([status["name"]] * status["percentage"])
+                
+            # Create sensors
+            for i in range(SENSOR_COUNT):
+                # Assign sensor type
+                for sensor_type, count in list(sensor_type_counts.items()):
+                    if count > 0:
+                        sensor_type_counts[sensor_type] -= 1
+                        break
+                        
+                # Generate random location within Amazon rainforest region
+                latitude = random.uniform(MIN_LAT, MAX_LAT)
+                longitude = random.uniform(MIN_LON, MAX_LON)
+                
+                # Randomly select ecosystem zone and conservation status
+                ecosystem_zone = random.choice(ecosystem_zones)
+                conservation_status = random.choice(conservation_statuses)
+                
+                # Create sensor with unique ID
+                sensor_id = f"am-{i+1:03d}"
+                sensor = VirtualSensor(
+                    sensor_id=sensor_id,
+                    sensor_type=sensor_type,
+                    latitude=latitude,
+                    longitude=longitude,
+                    ecosystem_zone=ecosystem_zone,
+                    conservation_status=conservation_status
+                )
+                
+                self.sensors.append(sensor)
+                
+            logger.info(f"Created {len(self.sensors)} virtual sensors")
+            
+        def start(self):
+            """Start the simulation"""
+            self.running = True
+            logger.info("Starting Amazon rainforest environmental simulator...")
+            
+            while self.running:
+                start_time = time.time()
+                
+                # Publish data for each sensor
+                for sensor in self.sensors:
+                    try:
+                        payload = sensor.get_payload()
+                        self.mqtt_client.publish(sensor.topic, payload, qos=1)
+                        logger.debug(f"Published data for sensor {sensor.id} to {sensor.topic}")
+                    except Exception as e:
+                        logger.error(f"Error publishing data for sensor {sensor.id}: {e}")
+                        
+                # Wait for the next interval, accounting for processing time
+                elapsed = time.time() - start_time
+                sleep_time = max(0.1, INTERVAL_SECONDS - elapsed)
+                time.sleep(sleep_time)
+                
+            # Clean up
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
+                
+        def stop(self):
+            """Stop the simulation"""
+            self.running = False
+            logger.info("Stopping simulator...")
+
+    if __name__ == "__main__":
+        try:
+            # Initialize and start simulator
+            simulator = RainforestSimulator()
+            simulator.start()
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt, shutting down...")
+            if simulator:
+                simulator.stop()
+        except Exception as e:
+            logger.error(f"Error in simulator: {e}", exc_info=True)

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-emqx
+  labels:
+    app: {{ .Release.Name }}-emqx
+    {{- include "chirpstack.labels" . | nindent 4 }}
+spec:
+  type: NodePort  # Change to NodePort for better accessibility
+  ports:
+    - port: {{ .Values.service.mqttPort }}
+      targetPort: mqtt
+      protocol: TCP
+      name: mqtt
+      nodePort: {{ .Values.service.nodePorts.mqtt | default 31883 }}
+    - port: {{ .Values.service.mqttsPort }}
+      targetPort: mqtts
+      protocol: TCP
+      name: mqtts
+      nodePort: {{ .Values.service.nodePorts.mqtts | default 31884 }}
+    - port: {{ .Values.service.dashboardPort }}
+      targetPort: dashboard
+      protocol: TCP
+      name: dashboard
+      nodePort: {{ .Values.service.nodePorts.dashboard | default 31885 }}
+  selector:
+    app: {{ .Release.Name }}-emqx

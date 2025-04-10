@@ -1,0 +1,70 @@
+replicaCount: 1
+
+image:
+  repository: python
+  tag: 3.9-alpine
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+config:
+  # MQTT connection settings
+  mqtt:
+    host: emqx
+    port: 1883
+    username: ""
+    password: ""
+    clientId: "rainforest-simulator"
+    topic: "amazon-rainforest/simulate"
+    
+  # Simulation settings
+  simulation:
+    # Number of virtual sensors to simulate
+    sensorCount: 10
+    # Interval in seconds between data publications
+    intervalSeconds: 60
+    # Min/max coordinates for the Amazon rainforest region (roughly central Brazil Amazon area)
+    region:
+      minLat: -5.0
+      maxLat: -2.0
+      minLon: -67.0
+      maxLon: -59.0
+    # Sensor types to simulate
+    sensorTypes:
+      - type: "airQuality"
+        percentage: 50
+      - type: "temperatureHumidity"
+        percentage: 30
+      - type: "rainfall"
+        percentage: 20
+    # Ecosystem zones with distributions
+    ecosystemZones:
+      - name: "varzea_floodplain"
+        percentage: 30
+      - name: "terra_firme"
+        percentage: 40
+      - name: "igapo"
+        percentage: 15  
+      - name: "campinarana"
+        percentage: 10
+      - name: "montane"
+        percentage: 5
+    # Conservation statuses
+    conservationStatuses:
+      - name: "protected_area"
+        percentage: 30
+      - name: "indigenous_territory"
+        percentage: 20
+      - name: "sustainable_use"
+        percentage: 15
+      - name: "unprotected"
+        percentage: 35

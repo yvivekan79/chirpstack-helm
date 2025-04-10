@@ -1,0 +1,45 @@
+# Default values for chirpstack-application-server
+replicaCount: 1
+
+image:
+  repository: chirpstack/chirpstack-application-server
+  tag: 3.17.3
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080
+
+ingress:
+  enabled: true
+  host: chirpstack.local
+  path: /
+  annotations:
+    kubernetes.io/ingress.class: nginx
+
+config:
+  postgresql:
+    dsn: "postgres://chirpstack:${PGPASSWORD}@postgresql:5432/chirpstack_as?sslmode=disable"
+  redis:
+    url: "redis://redis:6379"
+  application_server:
+    integration:
+      mqtt:
+        server: "tcp://emqx:1883"
+    api:
+      public_host: "chirpstack.local"
+    external_api:
+      jwt_secret: "change-me-to-something-secure"
+  join_server:
+    enabled: true
+  network_server:
+    server: "chirpstack-network-server:8000"

@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-chirpstack-gateway-bridge-config
+  labels:
+    app: {{ .Release.Name }}-chirpstack-gateway-bridge
+data:
+  chirpstack-gateway-bridge.toml: |
+    # ChirpStack Gateway Bridge configuration
+
+    # Log settings
+    [logging]
+    level = "{{ .Values.config.logging.level }}"
+
+    # Gateway backend settings
+    [backend]
+    type = "{{ .Values.config.backend.type }}"
+
+    [backend.semtech_udp]
+    udp_bind = "{{ .Values.config.backend.semtech_udp.udp_bind }}"
+
+    # Integration settings
+    [integration]
+    marshaler = "json"
+
+    [integration.mqtt]
+    server = "{{ .Values.config.integration.mqtt.server | default (printf "tcp://%s-emqx:1883" .Release.Name) }}"
+    event_topic_template = "{{ .Values.config.integration.mqtt.event_topic_template }}"
+    command_topic_template = "{{ .Values.config.integration.mqtt.command_topic_template }}"

@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-timescaledb-init
+  labels:
+    app: {{ .Release.Name }}-timescaledb
+    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+  init-timescaledb.sh: |-
+    #!/bin/bash
+    set -e
+
+    # Wait for TimescaleDB to be ready
+    until PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c '\q'; do
+      echo "Waiting for PostgreSQL to be ready..."
+      sleep 2
+    done
+
+    # Create IoT timeseries database if it doesn't exist
+    echo "Creating iot_timeseries database if it doesn't exist..."
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'iot_timeseries'" | grep -q 1 || \
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d postgres -c "CREATE DATABASE iot_timeseries;"
+
+    # Connect to IoT timeseries database
+    echo "Connecting to iot_timeseries database..."
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U postgres -d iot_timeseries -c "
+    -- Create TimescaleDB extension if not exists
+    CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+    
+    -- Create PostGIS extension if not exists
+    CREATE EXTENSION IF NOT EXISTS postgis CASCADE;
+    
+    -- Create sensor_data table if not exists
+    CREATE TABLE IF NOT EXISTS public.sensor_data (
+        time TIMESTAMPTZ NOT NULL,
+        deployment TEXT,
+        component TEXT,
+        role TEXT,
+        stage TEXT, 
+        destination TEXT,
+        topic TEXT,
+        device_id TEXT,
+        sensor_type TEXT,
+        location GEOGRAPHY(POINT),
+        value DOUBLE PRECISION,
+        source TEXT,
+        unit TEXT,
+        battery_level DOUBLE PRECISION,
+        rssi INTEGER,
+        snr DOUBLE PRECISION,
+        air_quality_index DOUBLE PRECISION,
+        temperature DOUBLE PRECISION,
+        humidity DOUBLE PRECISION,
+        co_level DOUBLE PRECISION,
+        no2_level DOUBLE PRECISION,
+        pm10_level DOUBLE PRECISION,
+        pm25_level DOUBLE PRECISION,
+        region_info TEXT,
+        conservation_status TEXT
+    );
+    
+    -- Create hypertable if not exists
+    SELECT create_hypertable('public.sensor_data', 'time', if_not_exists => TRUE);
+    
+    -- Create indexes for faster queries
+    CREATE INDEX IF NOT EXISTS idx_sensor_data_device_id ON public.sensor_data(device_id);
+    CREATE INDEX IF NOT EXISTS idx_sensor_data_sensor_type ON public.sensor_data(sensor_type);
+    CREATE INDEX IF NOT EXISTS idx_sensor_data_topic ON public.sensor_data(topic);
+    CREATE INDEX IF NOT EXISTS idx_sensor_data_location ON public.sensor_data USING GIST(location);
+    "
+
+    echo "Database initialization completed successfully!"

@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-geo-enrichment-config
+  labels:
+    app: {{ .Release.Name }}-geo-enrichment-service
+data:
+  default-locations.json: |
+    [
+      {
+        "name": "Manaus Urban Center",
+        "type": "urban",
+        "latitude": -3.1190,
+        "longitude": -60.0217,
+        "radius": 15000,
+        "properties": {
+          "population_density": "high",
+          "forest_proximity": "near",
+          "regulatory_region": "amazonas",
+          "country": "Brazil",
+          "biome_type": "urban_amazon",
+          "deforestation_risk": "moderate",
+          "carbon_storage": "low"
+        }
+      },
+      {
+        "name": "INPA Research Station",
+        "type": "research",
+        "latitude": -2.5917,
+        "longitude": -60.2094,
+        "radius": 5000,
+        "properties": {
+          "research_focus": "biodiversity",
+          "facility_type": "scientific",
+          "regulatory_region": "amazonas",
+          "country": "Brazil"
+        }
+      },
+      {
+        "name": "Anavilhanas National Park",
+        "type": "protected_forest",
+        "latitude": -2.6389,
+        "longitude": -60.7500,
+        "radius": 50000,
+        "properties": {
+          "ecosystem_type": "floodplain",
+          "conservation_status": "protected",
+          "regulatory_region": "amazonas",
+          "country": "Brazil",
+          "biome_type": "blackwater_floodplain",
+          "deforestation_risk": "low",
+          "carbon_storage": "very_high",
+          "biodiversity_index": "exceptional"
+        }
+      },
+      {
+        "name": "Jaú National Park",
+        "type": "protected_forest",
+        "latitude": -1.9500,
+        "longitude": -61.7500,
+        "radius": 40000,
+        "properties": {
+          "ecosystem_type": "rainforest",
+          "conservation_status": "UNESCO_heritage",
+          "regulatory_region": "amazonas",
+          "country": "Brazil"
+        }
+      },
+      {
+        "name": "Rio Negro Basin",
+        "type": "waterway",
+        "latitude": -3.0800,
+        "longitude": -60.1500,
+        "radius": 30000,
+        "properties": {
+          "waterway_type": "blackwater_river",
+          "ecosystem_type": "aquatic",
+          "regulatory_region": "amazonas",
+          "country": "Brazil",
+          "biome_type": "blackwater_aquatic",
+          "deforestation_risk": "medium",
+          "carbon_storage": "medium",
+          "biodiversity_index": "high",
+          "water_acidity": "high",
+          "hydrological_importance": "critical"
+        }
+      },
+      {
+        "name": "Tapajós National Forest",
+        "type": "protected_forest",
+        "latitude": -3.4653,
+        "longitude": -55.3723,
+        "radius": 45000,
+        "properties": {
+          "ecosystem_type": "rainforest",
+          "conservation_status": "managed_reserve",
+          "regulatory_region": "para",
+          "country": "Brazil"
+        }
+      },
+      {
+        "name": "Santarém City",
+        "type": "urban",
+        "latitude": -2.4431,
+        "longitude": -54.7081,
+        "radius": 10000,
+        "properties": {
+          "population_density": "medium",
+          "forest_proximity": "near",
+          "regulatory_region": "para",
+          "country": "Brazil"
+        }
+      },
+      {
+        "name": "Indigenous Territory - Yanomami",
+        "type": "indigenous_land",
+        "latitude": 2.4467,
+        "longitude": -63.3425,
+        "radius": 100000,
+        "properties": {
+          "community_type": "indigenous",
+          "protection_status": "demarcated",
+          "regulatory_region": "roraima_amazonas",
+          "country": "Brazil",
+          "biome_type": "primary_rainforest",
+          "deforestation_risk": "high",
+          "carbon_storage": "very_high",
+          "biodiversity_index": "critical",
+          "cultural_significance": "ancestral_territory"
+        }
+      },
+      {
+        "name": "Tefé Research Center",
+        "type": "research",
+        "latitude": -3.3664,
+        "longitude": -64.7091,
+        "radius": 5000,
+        "properties": {
+          "research_focus": "sustainable_development",
+          "facility_type": "field_station",
+          "regulatory_region": "amazonas",
+          "country": "Brazil"
+        }
+      },
+      {
+        "name": "Mamirauá Reserve",
+        "type": "protected_forest",
+        "latitude": -2.3083,
+        "longitude": -65.8639,
+        "radius": 35000,
+        "properties": {
+          "ecosystem_type": "várzea_forest",
+          "conservation_status": "sustainable_use",
+          "regulatory_region": "amazonas",
+          "country": "Brazil",
+          "biome_type": "whitewater_floodplain",
+          "deforestation_risk": "medium",
+          "carbon_storage": "high",
+          "biodiversity_index": "very_high",
+          "flooding_regime": "seasonal",
+          "research_priority": "high"
+        }
+      }
+    ]

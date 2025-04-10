@@ -1,0 +1,63 @@
+# TimescaleDB Helm chart values
+
+replicaCount: 1
+
+image:
+  repository: timescale/timescaledb-postgis
+  tag: "latest-pg14"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# TimescaleDB configuration
+config:
+  # Database configuration
+  database:
+    name: "iot_timeseries"
+    user: "postgres"
+    password: "postgres"
+    
+  # TimescaleDB specific configuration
+  timescaledb:
+    # Enable TimescaleDB extension
+    enabled: true
+    # Enable compression
+    compression_enabled: true
+    # Automatic compression after 7 days
+    compression_age: "7d"
+    
+  # PostgreSQL configuration
+  postgresql:
+    max_connections: 100
+    shared_buffers: "256MB"
+    
+# Persistence configuration
+persistence:
+  enabled: true
+  storageClass: "local-path"  # Using the default storage class
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  
+# Service configuration
+service:
+  type: ClusterIP
+  port: 5432
+  
+resources:
+  limits:
+    cpu: 1
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
